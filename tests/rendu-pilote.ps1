@@ -593,6 +593,162 @@ public class SourceSimulee : RealProxy
     Cas 'Chaînes : copie sans retrait, valeur d''origine échappée' ($copieN -ceq ("cmd\u202E.exe`t101`t8`tr`tcmd /c\r\nwhoami")) $copieN
     $vchVide = New-Object "Collections.Generic.List[$($chT.FullName)]"
     Cas 'Chaînes : avant lecture « Lecture en cours… », lue et vide « aucune chaîne suspecte »' (([string]$vch.GetMethod('Resume').Invoke($null, [object[]]@($vchVide.PSObject.BaseObject, $false, $false, $null, $null))) -eq 'Lecture en cours…' -and ([string]$vch.GetMethod('Resume').Invoke($null, [object[]]@($vchVide.PSObject.BaseObject, $true, $false, $null, $null))).StartsWith('Aucune chaîne suspecte'))
+    # T-20, étape 2 : page Chaînes en dossier d'analyse. Données fictives (comptes user01, domaines example.*, RFC 5737),
+    # lues par le même désérialiseur que l'interface (Commun.Json) : champs de l'étape 1 (#323) présents ou absents
+    $json = (& $t 'Commun').GetMethod('Json').Invoke($null, @())
+    # Objets passés à Invoke : jamais l'enveloppe PowerShell (PSObject) d'un résultat de pipeline
+    $bo = { param($o) if ($null -ne $o -and $o -is [Management.Automation.PSObject]) { $o.PSObject.BaseObject } else { $o } }
+    $lire = { param($texte) $json.GetType().GetMethods() | Where-Object { $_.Name -eq 'Deserialize' -and $_.IsGenericMethod } | Select-Object -First 1 | ForEach-Object { & $bo ($_.MakeGenericMethod((& $t 'Etat')).Invoke($json, @([string]$texte))) } }
+    $s = { param($code, $score, $heure, $tech, $raison) '{"Code":"' + $code + '","Score":' + $score + ',"Heure":"2026-11-23 ' + $heure + '","Techniques":[' + (($tech | ForEach-Object { '"' + $_ + '"' }) -join ',') + '],"Raison":"' + $raison + '"}' }
+    $n = { param($prof, $pid_, $nom, $chemin, $ppid, $vivant, $fin, $lien, [string[]]$sig, $parentNom = '', $score = -1) $sc = if ($score -ge 0) { $score } else { 0 }; '{"Profondeur":' + $prof + ',"Pid":' + $pid_ + ',"Nom":"' + $nom + '","Chemin":"' + $chemin + '","LigneCommande":"' + $nom + '.exe -x","Score":' + $sc + ',"Raisons":"r","ParentPid":' + $ppid + ',"Creation":"2026-11-23 10:40:49.102","CreationExacte":true,"Vivant":' + $vivant + ',"Fin":"' + $fin + '","Lien":"' + $lien + '","ParentNom":"' + $parentNom + '","Signaux":[' + ($sig -join ',') + '],"SignauxTronques":0}' }
+    $sPrc1 = & $s 'PRC-001#interpreteur' 8 '10:40:52' @('T1204.002') 'document Office qui lance un interpréteur'
+    $sPrc2 = & $s 'PRC-002#encode' 6 '10:40:53' @('T1059.001', 'T1027') 'PowerShell obscurci ou qui télécharge du code'
+    $sRes = & $s 'RES-002#nouvelle' 3 '10:40:55' @('T1071.001') 'réseau : connexion vers 203.0.113.45:443 (cdn.example.net)'
+    $sPrc3 = & $s 'PRC-003#rundll32' 5 '10:41:02' @('T1218.011') 'outil Windows détourné : rundll32'
+    $w = 'C:\\Windows\\System32\\'
+    $c1 = '{"Racine":"WINWORD","Score":31,"Resume":"WINWORD → cmd → powershell → rundll32","Depuis":"2026-11-23 10:40:52","Identite":"WINWORD#4812@1db5","Entite":"programme:C:\\Program Files\\Office\\WINWORD.EXE","NoeudsTronques":212,"Noeuds":[' + ((
+            (& $n 0 4812 'WINWORD' 'C:\\Program Files\\Office\\WINWORD.EXE' 3016 'true' '' 'racine-systeme' @() 'explorer' 0),
+            (& $n 1 6120 'cmd' ($w + 'cmd.exe') 4812 'false' '2026-11-23 10:40:57.000' 'suivi' @($sPrc1) '' 8),
+            (& $n 2 6344 'powershell' ($w + 'powershell.exe') 6120 'false' '2026-11-23 10:41:09.000' 'suivi' @($sPrc2, $sRes) '' 9),
+            (& $n 3 6988 'certutil' ($w + 'certutil.exe') 6344 'false' '' 'suivi' @($sPrc3) '' 5),
+            (& $n 3 7012 'rundll32' ('C:\\Users\\user01\\AppData\\Local\\Temp\\' + ('x' * 30) + '…') 6344 'true' '' 'suivi' @($sPrc3, $sRes) '' 9)) -join ',') + ']}'
+    $ps = (1..11 | ForEach-Object { & $n 2 (5000 + 4 * $_) 'powershell' ($w + 'powershell.exe') 4410 ($(if ($_ -eq 11) { 'true' } else { 'false' })) '' 'suivi' @($sPrc2) '' 6 })
+    $c2 = '{"Racine":"wscript","Score":14,"Resume":"wscript → cmd → powershell → rundll32","Depuis":"2026-11-23 10:12:04","Identite":"wscript#3920@1db5","Entite":"chaine:wscript#3920@1db5","Noeuds":[' + ((
+            @((& $n 0 3920 'wscript' ($w + 'wscript.exe') 2208 'false' '' 'pid-reutilise' @()), (& $n 1 4410 'cmd' ($w + 'cmd.exe') 3920 'true' '' 'suivi-approche' @())) + $ps +
+            @((& $n 2 5532 'powershell' ($w + 'powershell.exe') 4410 'false' '' 'suivi' @($sPrc2, $sRes) '' 9), (& $n 3 8120 'rundll32' ($w + 'rundll32.exe') 5532 'true' '' 'suivi' @($sPrc3) '' 5))) -join ',') + ']}'
+    $etatT20 = & $lire ('{"MisAJour":"2026-11-23 10:42:05","ChainesTronquees":true,"Chaines":[' + $c1 + ',' + $c2 + ']}')
+    $ancienT20 = & $lire '{"MisAJour":"2026-11-23 10:42:05","Chaines":[{"Racine":"WINWORD","Score":31,"Resume":"WINWORD → cmd","Depuis":"2026-11-23 10:40:52","Noeuds":[{"Profondeur":0,"Pid":4812,"Nom":"WINWORD","Score":0},{"Profondeur":1,"Pid":6120,"Nom":"cmd","Score":8,"Raisons":"document Office qui lance un interpréteur","Chemin":"C:\\Windows\\System32\\cmd.exe"},{"Profondeur":2,"Pid":6344,"Nom":"powershell","Score":9},{"Profondeur":1,"Pid":7000,"Nom":"conhost","Score":2}]}]}'
+    $etatT20 = & $bo $etatT20; $ancienT20 = & $bo $ancienT20
+    $ch1 = & $bo $etatT20.Chaines[0]; $ch2 = & $bo $etatT20.Chaines[1]; $chA = & $bo $ancienT20.Chaines[0]
+    $nd = { param($c, $p) foreach ($x in $c.Noeuds) { if ($x.Pid -eq $p) { return (& $bo $x) } } }
+    Cas 'T-20 lecture : champs de l''étape 1 lus (Vivant vrai/faux, Lien, signaux, PID parent, ChainesTronquees) ; absents d''un service plus ancien : null, jamais « terminé »' (
+        (& $nd $ch1 4812).Vivant -eq $true -and (& $nd $ch1 6120).Vivant -eq $false -and (& $nd $ch1 6344).Signaux.Count -eq 2 -and (& $nd $ch1 6120).ParentPid -eq 4812 -and $etatT20.ChainesTronquees -and
+        $null -eq (& $nd $chA 6120).Vivant -and $null -eq (& $nd $chA 6120).Lien -and -not $ancienT20.ChainesTronquees -and $vch.GetMethod('NouveauFormat').Invoke($null, @($ch1)) -and -not $vch.GetMethod('NouveauFormat').Invoke($null, @($chA)) -and
+        -not $vch.GetMethod('Termine').Invoke($null, @((& $nd $chA 6120))))
+
+    # Actions : tuer et suspendre jamais sur un processus vu terminé ; aucune action de chemin sur un chemin coupé (« … »)
+    $act = { param($x) (@($vch.GetMethod('Actions').Invoke($null, @($x))) -join ',') }
+    Cas 'T-20 actions : processus terminé sans tuer ni suspendre ; en cours ou service plus ancien (état inconnu) : comme avant' (
+        (& $act (& $nd $ch1 6120)) -eq 'quarantaine,isolerProgramme,emplacement,copier' -and (& $act (& $nd $ch1 4812)) -eq 'tuerChaine,suspendre,quarantaine,isolerProgramme,emplacement,copier' -and
+        (& $act (& $nd $chA 6120)) -eq 'tuerChaine,suspendre,quarantaine,isolerProgramme,emplacement,copier') "$(& $act (& $nd $ch1 6120)) / $(& $act (& $nd $ch1 4812))"
+    Cas 'T-20 actions : chemin coupé par le service (« … ») : ni quarantaine, ni isolement, ni emplacement ; tuer reste (processus en cours)' ((& $act (& $nd $ch1 7012)) -eq 'tuerChaine,suspendre,copier' -and $vch.GetMethod('CheminCoupe').Invoke($null, @('C:\a…')) -and -not $vch.GetMethod('CheminCoupe').Invoke($null, @('C:\a.exe'))) (& $act (& $nd $ch1 7012))
+
+    # Filtres par type de nœud et compteurs ; filtres d'état non proposés à un service plus ancien (« 0 » serait faux)
+    $cpt = { param($c) (0..5 | ForEach-Object { if ($vch.GetMethod('FiltrePropose').Invoke($null, @($c, [int]$_))) { [string]$vch.GetMethod('Compter').Invoke($null, @($c, [int]$_)) } else { '-' } }) -join ',' }
+    Cas 'T-20 filtres : Tous, Avec signaux, Sans signal, En cours, Terminés, Lien incertain comptés ; lien incertain = heure approchée ou parent non suivi (pas la racine système)' ((& $cpt $ch1) -eq '5,4,1,2,3,0' -and (& $cpt $ch2) -eq '15,13,2,3,12,2') "$(& $cpt $ch1) / $(& $cpt $ch2)"
+    Cas 'T-20 filtres : service plus ancien, seuls Tous, Avec signaux, Sans signal' ((& $cpt $chA) -eq '4,3,1,-,-,-') (& $cpt $chA)
+
+    # Graphe : répétitions regroupées (même parent, programme, ligne de commande, codes), case fantôme, couches, placement
+    $gr = { param($c, $reg, $choisi) & $bo ($vch.GetMethod('Graphe').Invoke($null, @((& $bo $c), [bool]$reg, $choisi))) }
+    $g2 = & $gr $ch2 $true $null
+    $cases2 = @($g2.Cases)
+    $groupe = $cases2 | Where-Object { $_.Membres.Count -gt 1 }
+    $fant = $cases2 | Where-Object { $_.Fantome }
+    $desc = ($cases2 | ForEach-Object { if ($_.Fantome) { 'F:' + $_.Titre + '/' + $_.Sous } else { "$($_.Couche):" + $_.Premier.Nom + 'x' + $_.Membres.Count } }) -join ' '
+    Cas 'T-20 graphe : 11 PowerShell identiques en une case ×11 ; celui qui a un signal de plus (RES-002) à part, avec son enfant ; 15 processus en 5 cases plus la case fantôme' (
+        $cases2.Count -eq 6 -and $groupe.Membres.Count -eq 11 -and @($cases2 | Where-Object { -not $_.Fantome -and $_.Premier.Pid -eq 8120 })[0].Parent.Premier.Pid -eq 5532 -and $g2.Processus -eq 15) $desc
+    Cas 'T-20 graphe : case fantôme du parent non suivi de la tête (« PID 2208 », PID repris), à gauche ; tête en couche 1' ($fant.Titre -eq 'PID 2208' -and $fant.Sous -eq 'PID repris' -and $fant.Couche -eq 0 -and $fant.Enfants[0].Premier.Pid -eq 3920 -and $fant.Enfants[0].Couche -eq 1) $desc
+    $g2b = & $gr $ch2 $false $null
+    Cas 'T-20 graphe : regroupement désactivé, une case par processus (15 plus la fantôme)' (@($g2b.Cases).Count -eq 16 -and @($g2b.Cases | Where-Object { $_.Membres.Count -gt 1 }).Count -eq 0) "$(@($g2b.Cases).Count)"
+    $g1 = & $gr $ch1 $true $null
+    $c1s = @($g1.Cases)
+    $parBox = { param($p) foreach ($x in $c1s) { if (-not $x.Fantome -and $x.Premier.Pid -eq $p) { return (& $bo $x) } } }
+    $psB = & $parBox 6344; $cuB = & $parBox 6988; $rdB = & $parBox 7012
+    $chev = $false; foreach ($a in $c1s) { foreach ($b in $c1s) { if ($a -ne $b -and $a.Couche -eq $b.Couche -and [math]::Abs($a.Y - $b.Y) -lt $vch.GetField('HauteurCase').GetValue($null)) { $chev = $true } } }
+    Cas 'T-20 placement : une colonne par couche (parents à gauche), parent centré sur ses enfants, aucune case en chevauche une autre' (
+        $psB.X -lt $cuB.X -and $cuB.X -eq $rdB.X -and [math]::Abs($psB.Y - ($cuB.Y + $rdB.Y) / 2) -lt 0.01 -and -not $chev -and (& $parBox 4812).Parent.Fantome -and (& $parBox 4812).Parent.Titre -eq 'explorer') "ps $($psB.X),$($psB.Y) certutil $($cuB.X),$($cuB.Y) rundll32 $($rdB.X),$($rdB.Y)"
+    $style = { param($l, $nv) [int]$vch.GetMethod('StyleLien').Invoke($null, @([string]$l, [bool]$nv)) }
+    Cas 'T-20 traits : plein suivi, pointillé heure approchée, tirets parent non suivi, plein discret racine système ; service plus ancien toujours plein' ((& $style 'suivi' $true) -eq 0 -and (& $style 'suivi-approche' $true) -eq 1 -and (& $style 'pid-reutilise' $true) -eq 2 -and (& $style 'parent-service' $true) -eq 2 -and (& $style 'racine-systeme' $true) -eq 3 -and (& $style 'suivi-approche' $false) -eq 0)
+    $gA = & $gr $chA $true $null
+    $cA = @($gA.Cases)
+    Cas 'T-20 graphe, service plus ancien : parent déduit du retrait (comme la vue texte), aucune case fantôme, aucun regroupement' (@($cA | Where-Object { $_.Fantome }).Count -eq 0 -and @($cA | Where-Object { $_.Premier.Pid -eq 6344 })[0].Parent.Premier.Pid -eq 6120 -and @($cA | Where-Object { $_.Premier.Pid -eq 7000 })[0].Parent.Premier.Pid -eq 4812 -and $cA.Count -eq 4) (($cA | ForEach-Object { "$($_.Premier.Pid)<$(if ($_.Parent) { $_.Parent.Premier.Pid })" }) -join ' ')
+
+    # Repli au-delà de 40 cases par couche : 299 enfants distincts de la tête, la case choisie reste visible
+    $grand = '{"Racine":"t","Score":40,"Resume":"t","Depuis":"x","Noeuds":[' + ((@((& $n 0 10000 't' 'C:\\t.exe' 900 'true' '' 'parent-inconnu' @())) + (1..299 | ForEach-Object { & $n 1 (10000 + 4 * $_) 'e' 'C:\\e.exe' 10000 'false' '' 'suivi' @() '' ($_ % 7) })) -join ',') + ']}'
+    $chG = & $bo (& $lire ('{"Chaines":[' + $grand + ']}')).Chaines[0]
+    $gG = & $gr $chG $false ([Nullable[int]]11196)
+    $couche2 = @($gG.Cases | Where-Object { $_.Couche -eq 2 })
+    $repli = $couche2 | Where-Object { $_.Repli }
+    Cas 'T-20 repli : 40 cases au plus par couche puis « +259 de plus », la case choisie (au-delà des 40 premières) reste visible, les plus lourdes d''abord' (
+        @($couche2 | Where-Object { -not $_.Repli }).Count -eq 40 -and $repli.Replies.Count -eq 259 -and $repli.Titre -eq '+259 de plus' -and @($couche2 | Where-Object { -not $_.Repli -and $_.Premier.Pid -eq 11196 }).Count -eq 1 -and
+        @($couche2 | Where-Object { -not $_.Repli -and $_.Premier.Score -eq 0 -and $_.Premier.Pid -ne 11196 }).Count -eq 0) "$(@($couche2).Count) cases, repli $($repli.Replies.Count)"
+
+    # Clavier du graphe : gauche parent, droite premier enfant, haut / bas case voisine de la couche, début
+    $vois = { param($g, $c, $k) $vch.GetMethod('Voisin').Invoke($null, @((& $bo $g), (& $bo $c), [string]$k)) }
+    Cas 'T-20 clavier : Gauche = parent, Droite = premier enfant, Haut / Bas = voisine de la même couche, Début = première case' (
+        (& $vois $g1 $psB 'Gauche').Premier.Pid -eq 6120 -and (& $vois $g1 $psB 'Droite').Premier.Pid -eq 6988 -and (& $vois $g1 $cuB 'Bas').Premier.Pid -eq 7012 -and (& $vois $g1 $rdB 'Haut').Premier.Pid -eq 6988 -and
+        (& $vois $g1 $rdB 'Bas').Premier.Pid -eq 7012 -and (& $vois $g1 $null 'Debut').Fantome)
+
+    # Alerte liée par l'entité (sans casse), jamais par le PID ; incident de même entité
+    $alT = (& $t 'Alerte'); $incT = (& $t 'IncidentSuivi')
+    $la20 = New-Object "Collections.Generic.List[$($alT.FullName)]"
+    $la20.Add((& $nouv $alT @{ Id = 'a1'; Regle = 'CHA-001'; Niveau = 'Critique'; Heure = '2026-11-23 10:41:07'; Pid = [Nullable[int]]7012; Entite = 'PROGRAMME:c:\program files\office\winword.exe'; Conseil = 'Tuez la chaîne.' }))
+    $la20.Add((& $nouv $alT @{ Id = 'a2'; Regle = 'PRC-003'; Niveau = 'Alerte'; Heure = '2026-11-23 10:41:08'; Entite = 'programme:C:\Program Files\Office\WINWORD.EXE' }))
+    $la20.Add((& $nouv $alT @{ Id = 'a3'; Regle = 'CHA-001'; Niveau = 'Critique'; Heure = '2026-11-23 10:20:09'; Pid = [Nullable[int]]3920; Entite = 'autre' }))
+    $li20 = New-Object "Collections.Generic.List[$($incT.FullName)]"
+    $li20.Add((& $nouv $incT @{ Id = 'i-clos'; Entite = 'programme:c:\program files\office\winword.exe'; Etat = 'Clos'; DerniereActiviteUtc = '2026-11-23T10:00:00Z' }))
+    $li20.Add((& $nouv $incT @{ Id = 'i-ouvert'; Entite = 'programme:c:\program files\office\winword.exe'; Etat = 'Ouvert'; DerniereActiviteUtc = '2026-11-23T09:00:00Z' }))
+    $liee = $vch.GetMethod('AlerteLiee').Invoke($null, @($ch1, $la20.PSObject.BaseObject))
+    Cas 'T-20 alerte liée : CHA-001 de même entité, comparée sans casse ; une autre règle de même entité ou un CHA-001 de même PID ne comptent pas ; service plus ancien : aucune' (
+        $liee.Id -eq 'a1' -and $null -eq $vch.GetMethod('AlerteLiee').Invoke($null, @($ch2, $la20.PSObject.BaseObject)) -and $null -eq $vch.GetMethod('AlerteLiee').Invoke($null, @($chA, $la20.PSObject.BaseObject))) "$($liee.Id)"
+    Cas 'T-20 incident lié : même entité, non clos d''abord' ($vch.GetMethod('IncidentLie').Invoke($null, @($ch1, $li20.PSObject.BaseObject)).Id -eq 'i-ouvert')
+    $band = { param($c, $al, $inc) (@($vch.GetMethod('Bandeau').Invoke($null, @((& $bo $c), $al, $inc))) | ForEach-Object { $_.Titre + '=' + $_.Valeur + ' [' + $_.Sous + ']' }) -join ' | ' }
+    $b1 = & $band $ch1 $la20.PSObject.BaseObject $li20.PSObject.BaseObject
+    Cas 'T-20 bandeau : niveau, processus (en cours, terminés, non publiés), signaux et techniques, premier signal et tête, alerte liée et incident' (
+        $b1.Contains('Niveau=Alerte [score 31') -and $b1.Contains('Processus=5 [2 en cours  ·  3 terminé(s)  ·  212 de plus non publié(s)]') -and $b1.Contains('Signaux=6 [sur 4 processus  ·  5 technique(s)]') -and
+        $b1.Contains('Premier signal=10:40:52 [tête lancée à 10:40:49 (exacte)]') -and $b1.Contains('Alerte liée=Critique [CHA-001  ·  10:41:07  ·  incident ouvert]')) $b1
+    $bI = & $band $ch1 $null $li20.PSObject.BaseObject; $bA = & $band $chA $la20.PSObject.BaseObject $li20.PSObject.BaseObject
+    Cas 'T-20 bandeau : alertes.json illisible, rien n''est conclu ; service plus ancien : « Non liée », état et signaux dits non publiés' ($bI.Contains('Alerte liée=? [alertes.json illisible : rien n''est conclu]') -and $bA.Contains('Alerte liée=Non liée') -and $bA.Contains('état non publié (service plus ancien)') -and $bA.Contains('Signaux=3 [processus avec un score')) "$bI // $bA"
+
+    # Résumé : chronologie des signaux, identiques regroupés ×N, libellé anglais par code, sinon la raison du service
+    $chr = { param($c) (@($vch.GetMethod('Chronologie').Invoke($null, @($c))) | ForEach-Object { $_.Heure + ' ' + $_.Nom + 'x' + $_.Fois + ' ' + $_.Libelle + ' (' + $_.Regle + ') +' + $_.Score }) -join ' | ' }
+    $k1 = & $chr $ch1; $k2 = & $chr $ch2; $kA = & $chr $chA
+    $langue.GetField('En').SetValue($null, $true); $k1en = & $chr $ch1; $techEn = (@($vch.GetMethod('Techniques').Invoke($null, @($ch1))) -join ','); $langue.GetField('En').SetValue($null, $false)
+    Cas 'T-20 résumé : signaux dans l''ordre de leur heure de rattachement ; en français la raison du service' ($k1.StartsWith('10:40:52 cmdx1 document Office qui lance un interpréteur (PRC-001) +8 | 10:40:53 powershellx1 PowerShell obscurci') -and $k1.Contains('(RES-002) +3')) $k1
+    Cas 'T-20 résumé : en anglais, libellé par code de règle (titres de regles.md), raison française sinon' ($k1en.Contains('Office document that launches an interpreter (PRC-001)') -and $k1en.Contains('Network: new connection with a suspicious score (RES-002)') -and $techEn -eq 'T1204.002,T1059.001,T1027,T1071.001,T1218.011') $k1en
+    Cas 'T-20 résumé : 12 signaux PRC-002 identiques sur la même ligne (×12, à l''heure du premier) ; service plus ancien : raisons sans heure' ($k2.Contains('powershellx12 PowerShell obscurci') -and $kA.StartsWith(' cmdx1 document Office')) "$k2 // $kA"
+
+    # Textes : lien, état, limites ; clé stable par l'identité
+    $tl = { param($l) [string]$vch.GetMethod('TexteLien').Invoke($null, @([string]$l)) }
+    Cas 'T-20 textes : nature du lien dite pour chaque code, code inconnu neutralisé, absent = « non publiée »' (
+        (& $tl 'pid-reutilise').Contains('PID repris') -and (& $tl 'parent-termine').Contains('vu terminé avant') -and (& $tl 'parent-service').Contains('usurpé') -and (& $tl 'suivi-approche').Contains('±10 s') -and
+        (& $tl ('x' + [char]0x202E)) -eq 'x?' -and (& $tl $null).Contains('non publiée')) (& $tl ('x' + [char]0x202E))
+    $etP = [string]$vch.GetMethod('EtatProcessus').Invoke($null, @((& $nd $ch1 6344)))
+    $lim = [string]$vch.GetMethod('Limites').Invoke($null, @($true)); $limA = [string]$vch.GetMethod('Limites').Invoke($null, @($false))
+    Cas 'T-20 limites dites : ancêtres des processus signalés, heure de rattachement, fin = borne haute (« vu disparu à ») ; service plus ancien en plus' ($etP -eq 'PID 6344  ·  terminé, vu disparu à 10:41:09' -and $lim.Contains('ancêtres des processus signalés') -and $lim.Contains('rattachement') -and $lim.Contains('borne haute') -and $limA.Length -gt $lim.Length) $etP
+    $cleAvant = [string]$vch.GetMethod('Cle').Invoke($null, @($ch1)); $ch1.Depuis = '2026-11-23 11:40:52'; $cleApres = [string]$vch.GetMethod('Cle').Invoke($null, @($ch1)); $ch1.Depuis = '2026-11-23 10:40:52'
+    Cas 'T-20 sélection : clé de chaîne par l''identité publiée, stable quand le plus vieux signal expire' ($cleAvant -eq $cleApres -and $cleAvant -eq 'i:WINWORD#4812@1db5') $cleAvant
+    Cas 'T-20 que faire : cible proposée = processus encore en cours le plus lourd ; jamais un processus terminé' ($vch.GetMethod('Cible').Invoke($null, @($ch1)).Pid -eq 7012 -and @($vch.GetMethod('Vivants').Invoke($null, @($ch1))).Count -eq 2 -and $null -eq $vch.GetMethod('Cible').Invoke($null, @($chA)))
+
+    # Page : vue graphe par défaut, budget de taille dit, vue texte gardée ; service plus ancien sans plantage
+    $pageCh = (& $t 'PageChainesFluent')
+    $tout = [Reflection.BindingFlags]'Instance,Static,Public,NonPublic'
+    $champ = { param($o, $nom) for ($ty = $o.GetType(); $ty; $ty = $ty.BaseType) { $f = $ty.GetField($nom, $tout); if ($f) { return $f } } }
+    $textes = { param($racine) $r = New-Object Collections.Generic.List[string]; $file = New-Object Collections.Queue; $file.Enqueue($racine)
+        while ($file.Count) { $x = $file.Dequeue(); if ($x -is [Windows.Controls.TextBlock]) { $r.Add($(if ($x.Inlines.Count) { -join @($x.Inlines | ForEach-Object { if ($_ -is [Windows.Documents.Run]) { $_.Text } }) } else { $x.Text })) } elseif ($x -is [Windows.Controls.Button] -and $x.Content -is [string]) { $r.Add($x.Content) }
+            if ($x -is [Windows.DependencyObject]) { foreach ($e in [Windows.LogicalTreeHelper]::GetChildren($x)) { $file.Enqueue($e) } } }; , $r }
+    $montrer = { param($etat, [bool]$texte, $choix)
+        $p = [Activator]::CreateInstance($pageCh, $tout, $null, [object[]]@($null), $null)
+        (& $champ $p 'vueTexte').SetValue($null, $texte)
+        (& $champ $p 'lu').SetValue($p, $true)
+        [void]$pageCh.GetMethod('Recevoir', $tout).Invoke($p, @((& $bo $etat)))
+        if ($choix) { (& $champ $p 'choixCase').SetValue($p, $choix) }
+        (& $champ $p 'vu').SetValue($p, $null); [void]$pageCh.GetMethod('Afficher', $tout).Invoke($p, @())
+        return $p }
+    $pageCh.GetField('vueTexte', $tout).SetValue($null, $false)
+    $pG = & $montrer $etatT20 $false 'p6344'
+    $txG = (& $textes $pG) -join ' | '
+    Cas 'T-20 page : vue graphe par défaut (bascule Graphe / Texte), bandeau, filtres comptés, budget de taille dit, processus terminé sans tuer' (
+        $txG.Contains('Graphe') -and $txG.Contains('Texte') -and $txG.Contains('Premier signal') -and $txG.Contains('Lien incertain  0') -and $txG.Contains('laissés hors d''etat.json') -and
+        $txG.Contains('Ce processus est terminé : tuer et suspendre ne sont pas proposés') -and $txG.Contains('Qui a lancé quoi') -and -not $txG.Contains('Tuer ce processus et toute sa descendance')) $txG.Substring(0, [math]::Min(400, $txG.Length))
+    $pT = & $montrer $etatT20 $true $null
+    $txT = (& $textes $pT) -join ' | '
+    Cas 'T-20 page : vue texte d''avant gardée (liste des chaînes, arbre en retrait « └ »), même résumé' ($txT.Contains('└ cmd') -and $txT.Contains('Qui a lancé quoi') -and -not $txT.Contains('Premier signal') -and $txT.Contains('laissés hors d''etat.json')) $txT.Substring(0, [math]::Min(300, $txT.Length))
+    $pA = & $montrer $ancienT20 $false $null
+    $txA = (& $textes $pA) -join ' | '
+    Cas 'T-20 page, service plus ancien : lisible sans plantage, rien d''affirmé sur l''état, les signaux ou l''alerte' ($txA.Contains('Non liée') -and $txA.Contains('ne dit pas quels processus tournent encore') -and -not $txA.Contains('En cours  ') -and -not $txA.Contains('terminé :')) $txA.Substring(0, [math]::Min(300, $txA.Length))
+    $pageCh.GetField('vueTexte', $tout).SetValue($null, $false)
+    Cas 'T-20 coquille : « Ouvrir l''alerte liée » ouvre la page Alertes sur cette alerte (tous niveaux)' ($fluentSrc.Contains('pageAlertes.Montrer(id)') -and $fluentSrc.Contains('internal void Montrer(string id) { niveau = null; choisie = id; Rafraichir(); }'))
     $guiSrc = [IO.File]::ReadAllText("$src\Gui.cs")
     Cas 'Connexions : aucun compteur de filtre avant la première lecture (« 0 » ferait croire à une liste vide)' ($fluentSrc.Contains('(lu ? "  " + VueConnexionsFluent.Filtrer(flux, n).Count : "")'))
     Cas 'Connexions et Chaînes : seules les réponses que la question d''AgirSur sait dire partent de la coquille' ($guiSrc.Contains('var permises = new[] { "tuer", "tuerChaine", "suspendre", "reprendre", "quarantaine", "isolerProgramme" };') -and $guiSrc.Contains('permises.Contains(action)) AgirSur(element, action);'))

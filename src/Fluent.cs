@@ -1095,7 +1095,8 @@ namespace DeR4Tizer
             if (cle == "Événements") { zone.Content = new PageEvenementsFluent(); return; }
             // Connexions et Chaînes en WPF (U4a) : actions par la fenêtre d'aujourd'hui (mêmes questions)
             if (cle == "Connexions") { zone.Content = new PageConnexionsFluent(source as ISourceReponses); return; }
-            if (cle == "Chaînes") { zone.Content = new PageChainesFluent(source as ISourceReponses); return; }
+            // Chaînes (T-20) : « Ouvrir l'alerte liée » ouvre la page Alertes sur cette alerte
+            if (cle == "Chaînes") { zone.Content = new PageChainesFluent(source as ISourceReponses, alertes == null ? null : (Action<string>)(id => { Ouvrir("Alertes"); if (pageAlertes != null) pageAlertes.Montrer(id); })); return; }
             // Trafic en WPF (U4b) : lecture seule, aucune action ; un pays signalé ouvre Connexions sur l'onglet Suspectes (T-19)
             if (cle == "Trafic")
             {
@@ -1414,6 +1415,9 @@ namespace DeR4Tizer
         }
 
         string vu;              // signature du dernier affichage : rien n'est reconstruit si rien n'a changé
+
+        // Ouverte depuis une autre page sur une alerte (page Chaînes, « Ouvrir l'alerte liée », T-20) : tous les niveaux
+        internal void Montrer(string id) { niveau = null; choisie = id; Rafraichir(); }
 
         // Reconstruit filtres, liste et panneau ; filtre et alerte choisie sont gardés. Appelé à chaque rafraîchissement de
         // la fenêtre d'aujourd'hui (2 s) : seulement si les alertes, la lecture ou les collectes ont changé (défilement gardé)
@@ -2788,7 +2792,9 @@ namespace DeR4Tizer
             return c != null && c.Score >= SeuilChaine ? 2 : n.Score >= Commun.SeuilAlerte ? 1 : 0;
         }
 
-        public static string Cle(Chaine c) { return (c.Racine ?? "") + "|" + (c.Depuis ?? ""); }
+        // Identité publiée par l'étape 1 de T-20 (tête, PID, heure de création) : stable quand le plus vieux signal expire ;
+        // service plus ancien : racine et heure du premier signal, comme avant
+        public static string Cle(Chaine c) { return !string.IsNullOrEmpty(c.Identite) ? "i:" + c.Identite : (c.Racine ?? "") + "|" + (c.Depuis ?? ""); }
 
         // Chaînes au score positif, comme la page d'aujourd'hui ; les plus lourdes d'abord
         public static List<Chaine> Suspectes(IList<Chaine> chaines)
@@ -2800,8 +2806,10 @@ namespace DeR4Tizer
         {
             var l = new List<string>();
             if (n == null) return l;
-            if (n.Pid > 4) { l.Add("tuerChaine"); l.Add("suspendre"); }
-            if (!string.IsNullOrEmpty(n.Chemin)) { l.Add("quarantaine"); l.Add("isolerProgramme"); l.Add("emplacement"); }
+            // Processus vu terminé (T-20) : son PID a pu être repris par un autre programme, tuer et suspendre ne sont pas proposés
+            if (n.Pid > 4 && !Termine(n)) { l.Add("tuerChaine"); l.Add("suspendre"); }
+            // Chemin coupé par le service (« … ») : il ne désigne plus le programme, aucune action sur le fichier (T-20)
+            if (!string.IsNullOrEmpty(n.Chemin) && !CheminCoupe(n.Chemin)) { l.Add("quarantaine"); l.Add("isolerProgramme"); l.Add("emplacement"); }
             l.Add("copier");
             return l;
         }
@@ -2846,6 +2854,542 @@ namespace DeR4Tizer
             if (panne != null) texte += "\n" + (en ? "Incomplete list: " : "Liste incomplète : ") + panne;
             return lecture != null ? lecture + "\n" + texte : texte;
         }
+
+        // ---- T-20, étape 2 : dossier d'analyse (bandeau, résumé, que faire, graphe). Tout vient des champs publiés par
+        // l'étape 1 (#323) ; avec un service plus ancien (champs absents), rien n'est affirmé de ce qu'il ne publie pas ----
+
+        // Au-delà de 40 cases dans une couche du graphe, le reste est replié dans une case « +N de plus »
+        public const int MaxParCouche = 40;
+        public const double LargeurCase = 128, HauteurCase = 50, PasX = 158, PasY = 60, Marge = 10;
+        public static readonly string[] Filtres = { "Tous", "Avec signaux", "Sans signal", "En cours", "Terminés", "Lien incertain" };
+        static readonly string[] FiltresEn = { "All", "With signals", "Without signal", "Running", "Exited", "Uncertain link" };
+
+        public static string NomFiltre(int k) { return k < 0 || k >= Filtres.Length ? "" : L.En ? FiltresEn[k] : Filtres[k]; }
+
+        // Champs de l'étape 1 présents : le service écrit toujours Lien (code fermé, jamais vide) ; absent = service plus ancien
+        public static bool Publie(NoeudChaine n) { return n != null && !string.IsNullOrEmpty(n.Lien); }
+        public static bool NouveauFormat(Chaine c) { return c != null && c.Noeuds != null && c.Noeuds.Count > 0 && c.Noeuds.All(Publie); }
+        // Tête de chaîne : son parent n'est pas suivi (raison dans Lien) ; « suivi » et « suivi-approche » ont un parent dans la chaîne
+        public static bool EstTete(NoeudChaine n) { return Publie(n) && n.Lien != "suivi" && n.Lien != "suivi-approche"; }
+        // Lien incertain : parent suivi à heure approchée, ou parent non suivi (sauf racine reconnue par chemin exact)
+        public static bool LienIncertain(NoeudChaine n) { return Publie(n) && n.Lien != "suivi" && n.Lien != "racine-systeme"; }
+        public static bool EnCours(NoeudChaine n) { return Publie(n) && n.Vivant == true; }
+        public static bool Termine(NoeudChaine n) { return Publie(n) && n.Vivant == false; }
+
+        // Chemin coupé par le service (au-delà de 1 024 caractères, « … » à la fin) : il ne désigne plus un fichier
+        public static bool CheminCoupe(string chemin) { return !string.IsNullOrEmpty(chemin) && chemin.EndsWith("…", StringComparison.Ordinal); }
+
+        public static bool Garde(NoeudChaine n, int filtre)
+        {
+            if (n == null) return false;
+            switch (filtre)
+            {
+                case 1: return n.Score > 0;
+                case 2: return n.Score <= 0;
+                case 3: return EnCours(n);
+                case 4: return Termine(n);
+                case 5: return LienIncertain(n);
+                default: return true;
+            }
+        }
+
+        // Filtres 3 à 5 : faits publiés par l'étape 1 seulement ; avec un service plus ancien ils ne sont pas proposés (« 0 » serait faux)
+        public static bool FiltrePropose(Chaine c, int filtre) { return filtre >= 0 && filtre < Filtres.Length && (filtre < 3 || NouveauFormat(c)); }
+        public static int Compter(Chaine c, int filtre) { return c == null || c.Noeuds == null ? 0 : c.Noeuds.Count(n => Garde(n, filtre)); }
+
+        // « AAAA-MM-JJ HH:MM:SS[.mmm] » → « HH:MM:SS » ; autre forme : le texte neutralisé tel quel
+        public static string HeureCourte(string h)
+        {
+            if (string.IsNullOrEmpty(h)) return "";
+            return h.Length >= 19 && h[10] == ' ' ? Canal.Visible(h.Substring(11, 8)) : Canal.Visible(h);
+        }
+
+        // Libellés anglais par règle (titres de docs/detection/regles.md) ; en français, la raison du service telle quelle
+        static readonly Dictionary<string, string> LibellesEn = new Dictionary<string, string>
+        {
+            { "RES-001", "Connection to an address or a domain from the threat lists" }, { "RES-002", "Network: new connection with a suspicious score" },
+            { "RES-003", "First Internet connection of a program" }, { "RES-004", "Public address directly on the PC" },
+            { "RES-005", "Incoming packet from the Internet" }, { "RES-006", "New port open and listening on the network" },
+            { "RES-007", "Incoming connection from the Internet" }, { "DNS-001", "DNS query to a known malicious domain" },
+            { "DNS-002", "DNS server changed on an adapter" }, { "DNS-003", "DNS port of the loopback held by another program" },
+            { "PRC-001", "Office document that launches an interpreter" }, { "PRC-002", "Obfuscated PowerShell or PowerShell that downloads code" },
+            { "PRC-003", "Abuse of a Windows tool (LOLBin)" }, { "PRC-004", "Browser launched in remote debugging mode" },
+            { "PRC-005", "Deletion of backups" }, { "CHA-001", "Process chain with a cumulative score" },
+            { "PER-001", "New autostart" }, { "PER-002", "Modified autostart" },
+            { "LEU-001", "Decoy modified, deleted, renamed or replaced by a link" }, { "LEU-002", "Decoy touched" },
+            { "VOL-001", "Access to the secrets of a software by another program" }, { "SYS-001", "Hosts file modified by another program" },
+            { "SYS-002", "Firewall rule added or modified" }, { "SYS-003", "All firewall rules deleted" },
+            { "PIL-001", "Known vulnerable driver present" }, { "EXT-001", "New browser extension" }, { "BAS-001", "Baseline security setting undone" },
+        };
+
+        public static string Regle(string code)
+        {
+            if (string.IsNullOrEmpty(code)) return "";
+            int i = code.IndexOf('#');
+            return Canal.Visible(i < 0 ? code : code.Substring(0, i));
+        }
+
+        public static string LibelleSignal(SignalChaine s)
+        {
+            if (s == null) return "";
+            string raison = Canal.Visible(s.Raison), l;
+            if (!L.En) return raison.Length > 0 ? raison : Regle(s.Code);
+            if (s.Code == "CHA-001#parent-service") return "Parent is the deR4Tizer service, but this is not one of its programs (spoofed parent?)";
+            if (s.Code != null && LibellesEn.TryGetValue(Regle(s.Code), out l)) return l;
+            return raison.Length > 0 ? raison : Regle(s.Code);
+        }
+
+        public static List<SignalChaine> Signaux(NoeudChaine n) { return n == null || n.Signaux == null ? new List<SignalChaine>() : n.Signaux.Where(s => s != null).ToList(); }
+
+        public class LigneChrono { public string Heure, Derniere, Nom, Libelle, Regle; public int Score, Pid, Fois = 1; }
+
+        // Chronologie des signaux, dans l'ordre de leur heure de rattachement (puis de publication) ; signaux identiques
+        // (même programme, même libellé, même règle, même score) sur une seule ligne « ×N » à l'heure du premier ; service
+        // plus ancien : les processus qui ont un score, sans heure, avec leurs raisons
+        public static List<LigneChrono> Chronologie(Chaine c)
+        {
+            var noeuds = c == null || c.Noeuds == null ? new List<NoeudChaine>() : c.Noeuds.Where(n => n != null).ToList();
+            var l = new List<KeyValuePair<string, LigneChrono>>();
+            if (!NouveauFormat(c))
+            {
+                foreach (var n in noeuds.Where(n => n.Score > 0))
+                    l.Add(new KeyValuePair<string, LigneChrono>("", new LigneChrono { Heure = "", Nom = Canal.Visible(n.Nom), Libelle = Canal.Visible(n.Raisons), Regle = "", Score = n.Score, Pid = n.Pid }));
+                return l.Select(x => x.Value).ToList();
+            }
+            foreach (var n in noeuds)
+                foreach (var s in Signaux(n))
+                    l.Add(new KeyValuePair<string, LigneChrono>(s.Heure ?? "", new LigneChrono { Heure = HeureCourte(s.Heure), Nom = Canal.Visible(n.Nom), Libelle = LibelleSignal(s), Regle = Regle(s.Code), Score = s.Score, Pid = n.Pid }));
+            var tries = l.Select((x, i) => new { x, i }).OrderBy(y => y.x.Key, StringComparer.Ordinal).ThenBy(y => y.i).Select(y => y.x.Value).ToList();
+            var r = new List<LigneChrono>();
+            var vues = new Dictionary<string, LigneChrono>();
+            foreach (var x in tries)
+            {
+                string cle = x.Nom + "\u0001" + x.Libelle + "\u0001" + x.Regle + "\u0001" + x.Score;
+                LigneChrono deja;
+                if (vues.TryGetValue(cle, out deja)) { deja.Fois++; deja.Derniere = x.Heure; continue; }
+                x.Derniere = x.Heure;
+                vues[cle] = x; r.Add(x);
+            }
+            return r;
+        }
+
+        public static List<string> Techniques(Chaine c)
+        {
+            var vues = new List<string>();
+            if (c == null || c.Noeuds == null) return vues;
+            foreach (var n in c.Noeuds)
+                foreach (var s in Signaux(n))
+                    foreach (var t in s.Techniques ?? new List<string>())
+                    {
+                        string v = Canal.Visible(t);
+                        if (v.Length > 0 && !vues.Contains(v)) vues.Add(v);
+                    }
+            return vues;
+        }
+
+        public static int NombreSignaux(Chaine c) { return c == null || c.Noeuds == null ? 0 : c.Noeuds.Where(n => n != null).Sum(n => Signaux(n).Count + Math.Max(0, n.SignauxTronques)); }
+        public static int SignauxNonPublies(Chaine c) { return c == null || c.Noeuds == null ? 0 : c.Noeuds.Where(n => n != null).Sum(n => Math.Max(0, n.SignauxTronques)); }
+
+        // Phrase de tête du résumé : faits publiés seulement (aucune interprétation de ce que la chaîne « a fait »)
+        public static string Phrase(Chaine c)
+        {
+            bool en = L.En;
+            var n = c == null || c.Noeuds == null ? new List<NoeudChaine>() : c.Noeuds.Where(x => x != null).ToList();
+            if (c == null || n.Count == 0) return en ? "No process published for this chain." : "Aucun processus publié pour cette chaîne.";
+            var tete = n[0];
+            string seuil = c.Score >= SeuilChaine ? (en ? "above the alert threshold (12)" : "au-delà du seuil d'alerte (12)") : (en ? "below the alert threshold (12)" : "sous le seuil d'alerte (12)");
+            string texte = string.Format(en ? "{0} (PID {1}) heads a chain of {2} published process(es)." : "{0} (PID {1}) est en tête d'une chaîne de {2} processus publié(s).", Canal.Visible(tete.Nom), tete.Pid, n.Count);
+            int avec = n.Count(x => x.Score > 0);
+            if (NouveauFormat(c)) texte += " " + string.Format(en ? "{0} signal(s) on {1} of them; chain score {2}, {3}." : "{0} signal(s) sur {1} d'entre eux ; score de la chaîne {2}, {3}.", NombreSignaux(c), n.Count(x => Signaux(x).Count > 0 || x.SignauxTronques > 0), c.Score, seuil);
+            else texte += " " + string.Format(en ? "{0} of them carry a score; chain score {1}, {2}." : "{0} d'entre eux portent un score ; score de la chaîne {1}, {2}.", avec, c.Score, seuil);
+            return texte;
+        }
+
+        public class CaseBandeau { public string Titre, Valeur, Sous; public int Gravite; }
+
+        // Alerte liée : la dernière alerte CHA-001 dont l'entité est celle de la chaîne (comparée sans casse, comme la page
+        // Incidents) ; jamais devinée par le PID ou le texte « chaîne : … » (service plus ancien : aucune)
+        public static Alerte AlerteLiee(Chaine c, IList<Alerte> alertes)
+        {
+            if (c == null || alertes == null || string.IsNullOrWhiteSpace(c.Entite)) return null;
+            string e = c.Entite.Trim();
+            Alerte r = null;
+            foreach (var a in alertes)
+                if (a != null && a.Regle == "CHA-001" && string.Equals((a.Entite ?? "").Trim(), e, StringComparison.OrdinalIgnoreCase)) r = a;
+            return r;
+        }
+
+        // Incident de même entité : un incident non clos d'abord, puis le plus récent
+        public static IncidentSuivi IncidentLie(Chaine c, IList<IncidentSuivi> incidents)
+        {
+            if (c == null || incidents == null || string.IsNullOrWhiteSpace(c.Entite)) return null;
+            string e = c.Entite.Trim();
+            return incidents.Where(i => i != null && string.Equals((i.Entite ?? "").Trim(), e, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(i => i.Etat == "Clos" ? 1 : 0).ThenByDescending(i => i.DerniereActiviteUtc ?? "", StringComparer.Ordinal).FirstOrDefault();
+        }
+
+        public static string EtatIncident(IncidentSuivi i)
+        {
+            bool en = L.En;
+            if (i == null) return "";
+            return i.Etat == "Clos" ? (en ? "incident closed" : "incident clos") : i.Etat == "PrisEnCharge" ? (en ? "incident taken in charge" : "incident pris en charge") : (en ? "incident open" : "incident ouvert");
+        }
+
+        // Bandeau de 5 cases : niveau, processus, signaux, premier signal, alerte liée. alertes : null = alertes.json illisible
+        public static List<CaseBandeau> Bandeau(Chaine c, IList<Alerte> alertes, IList<IncidentSuivi> incidents)
+        {
+            bool en = L.En;
+            var r = new List<CaseBandeau>();
+            if (c == null) return r;
+            var n = c.Noeuds == null ? new List<NoeudChaine>() : c.Noeuds.Where(x => x != null).ToList();
+            bool nouveau = NouveauFormat(c);
+            int g = Gravite(c);
+            r.Add(new CaseBandeau { Titre = en ? "Level" : "Niveau", Valeur = g > 0 ? Briques.NiveauChaine(g) : (en ? "Low score" : "Score faible"), Sous = "score " + c.Score + "  ·  " + (en ? "alert above 12" : "alerte au-delà de 12"), Gravite = g });
+            string sousP = !nouveau ? (en ? "running state not published (older service)" : "état non publié (service plus ancien)")
+                : string.Format(en ? "{0} running  ·  {1} exited" : "{0} en cours  ·  {1} terminé(s)", n.Count(EnCours), n.Count(Termine));
+            if (c.NoeudsTronques > 0) sousP += "  ·  " + string.Format(en ? "{0} more not published" : "{0} de plus non publié(s)", c.NoeudsTronques);
+            r.Add(new CaseBandeau { Titre = en ? "Processes" : "Processus", Valeur = n.Count.ToString(), Sous = sousP });
+            if (nouveau)
+            {
+                int techniques = Techniques(c).Count, non = SignauxNonPublies(c);
+                string sousS = string.Format(en ? "on {0} process(es)  ·  {1} technique(s)" : "sur {0} processus  ·  {1} technique(s)", n.Count(x => Signaux(x).Count > 0 || x.SignauxTronques > 0), techniques);
+                if (non > 0) sousS += "  ·  " + string.Format(en ? "{0} not published" : "{0} non publié(s)", non);
+                r.Add(new CaseBandeau { Titre = en ? "Signals" : "Signaux", Valeur = NombreSignaux(c).ToString(), Sous = sousS });
+                var heures = n.SelectMany(x => Signaux(x)).Select(s => s.Heure ?? "").Where(h => h.Length > 0).OrderBy(h => h, StringComparer.Ordinal).ToList();
+                var tete = n.FirstOrDefault();
+                string sousT = tete == null || string.IsNullOrEmpty(tete.Creation) ? "" : string.Format(en ? "head started {0} ({1})" : "tête lancée à {0} ({1})", HeureCourte(tete.Creation),
+                    tete.CreationExacte == true ? (en ? "exact" : "exacte") : (en ? "approx." : "approchée"));
+                r.Add(new CaseBandeau { Titre = en ? "First signal" : "Premier signal", Valeur = heures.Count > 0 ? HeureCourte(heures[0]) : "?", Sous = sousT });
+            }
+            else
+            {
+                r.Add(new CaseBandeau { Titre = en ? "Signals" : "Signaux", Valeur = n.Count(x => x.Score > 0).ToString(), Sous = en ? "processes with a score (signals not published by this service version)" : "processus avec un score (signaux non publiés par cette version du service)" });
+                r.Add(new CaseBandeau { Titre = en ? "First signal" : "Premier signal", Valeur = HeureCourte(c.Depuis), Sous = (en ? "since " : "depuis ") + Canal.Visible(c.Depuis) });
+            }
+            var titreA = en ? "Linked alert" : "Alerte liée";
+            if (string.IsNullOrWhiteSpace(c.Entite))
+                r.Add(new CaseBandeau { Titre = titreA, Valeur = en ? "Not linked" : "Non liée", Sous = en ? "chain entity not published" : "entité de la chaîne non publiée" });
+            else if (alertes == null)
+                r.Add(new CaseBandeau { Titre = titreA, Valeur = "?", Sous = en ? "alertes.json unreadable: nothing is concluded" : "alertes.json illisible : rien n'est conclu" });
+            else
+            {
+                var al = AlerteLiee(c, alertes);
+                if (al == null) r.Add(new CaseBandeau { Titre = titreA, Valeur = en ? "None found" : "Aucune trouvée", Sous = en ? "no CHA-001 alert with this entity in alertes.json" : "aucune alerte CHA-001 de cette entité dans alertes.json" });
+                else
+                {
+                    var inc = IncidentLie(c, incidents);
+                    string sousA = "CHA-001  ·  " + HeureCourte(al.Heure) + (inc != null ? "  ·  " + EtatIncident(inc) : "");
+                    r.Add(new CaseBandeau { Titre = titreA, Valeur = Canal.Visible(L.T(al.Niveau)), Sous = sousA, Gravite = al.Niveau == "Critique" ? 2 : al.Niveau == "Alerte" ? 1 : 0 });
+                }
+            }
+            return r;
+        }
+
+        // Processus encore en cours (PID utilisable) ; cible proposée par « Que faire » : le plus lourd, le plus profond à égalité
+        public static List<NoeudChaine> Vivants(Chaine c) { return c == null || c.Noeuds == null ? new List<NoeudChaine>() : c.Noeuds.Where(n => EnCours(n) && n.Pid > 4).ToList(); }
+        public static NoeudChaine Cible(Chaine c)
+        {
+            NoeudChaine r = null;
+            foreach (var n in Vivants(c)) if (r == null || n.Score >= r.Score) r = n;
+            return r;
+        }
+
+        public static string TexteLien(string lien)
+        {
+            bool en = L.En;
+            switch (lien ?? "")
+            {
+                case "suivi": return en ? "followed: parent alive when this process started" : "suivi : parent vivant au lancement de ce processus";
+                case "suivi-approche": return en ? "followed, parent time approximated (±10 s): its 4688 event is missing" : "suivi, heure du parent approchée (±10 s) : son événement 4688 manque";
+                case "racine-systeme": return en ? "system root (recognised by its exact path, or PID 1 to 4)" : "racine du système (reconnue par son chemin exact, ou PID 1 à 4)";
+                case "parent-inconnu": return en ? "parent not followed: unknown parent (absent from the tree, older than one hour or never seen)" : "parent non suivi : parent inconnu (absent de l'arbre, plus vieux d'une heure ou jamais vu)";
+                case "pid-reutilise": return en ? "parent not followed: PID reused (now held by a process started after this one)" : "parent non suivi : PID repris (tenu par un processus lancé après celui-ci)";
+                case "parent-termine": return en ? "parent not followed: the parent was seen gone before this process started" : "parent non suivi : le parent a été vu terminé avant le lancement de ce processus";
+                case "parent-service": return en ? "parent not followed: the deR4Tizer service, but this is not one of its programs (spoofed parent?)" : "parent non suivi : le service de deR4Tizer, mais ce n'est pas un de ses programmes (parent usurpé ?)";
+                case "profondeur-max": return en ? "parent not followed: walk up stopped at 32 processes" : "parent non suivi : remontée arrêtée à 32 processus";
+                case "": return en ? "nature of the link not published (older service)" : "nature du lien non publiée (service plus ancien)";
+            }
+            return Canal.Visible(lien);
+        }
+
+        // Trait vers une case : 0 plein (parent suivi, ou service plus ancien : nature non publiée), 1 pointillé (heure du
+        // parent approchée), 2 tirets (parent non suivi, vers la case fantôme), 3 plein discret (racine du système)
+        public static int StyleLien(string lien, bool nouveau)
+        {
+            if (!nouveau) return 0;
+            switch (lien ?? "")
+            {
+                case "suivi": return 0;
+                case "suivi-approche": return 1;
+                case "racine-systeme": return 3;
+            }
+            return 2;
+        }
+
+        // Sous-titre court de la case fantôme (parent non suivi de la tête)
+        public static string SousFantome(string lien)
+        {
+            bool en = L.En;
+            switch (lien ?? "")
+            {
+                case "racine-systeme": return en ? "system root" : "racine du système";
+                case "parent-inconnu": return en ? "unknown parent" : "parent inconnu";
+                case "pid-reutilise": return en ? "PID reused" : "PID repris";
+                case "parent-termine": return en ? "parent ended before" : "parent terminé avant";
+                case "parent-service": return en ? "spoofed parent?" : "parent usurpé ?";
+                case "profondeur-max": return en ? "depth limit (32)" : "limite de 32";
+            }
+            return en ? "parent not published" : "parent non publié";
+        }
+
+        public static string EtatProcessus(NoeudChaine n)
+        {
+            bool en = L.En;
+            if (n == null) return "";
+            if (!Publie(n)) return "PID " + n.Pid + "  ·  " + (en ? "running state not published (older service)" : "état non publié (service plus ancien)");
+            if (n.Vivant == true) return "PID " + n.Pid + "  ·  " + (en ? "running" : "en cours");
+            return "PID " + n.Pid + "  ·  " + (en ? "exited" : "terminé") + (string.IsNullOrEmpty(n.Fin) ? "" : ", " + (en ? "seen gone at " : "vu disparu à ") + HeureCourte(n.Fin));
+        }
+
+        public static string Naissance(NoeudChaine n)
+        {
+            bool en = L.En;
+            if (!Publie(n) || string.IsNullOrEmpty(n.Creation)) return null;
+            return (en ? "started " : "lancé le ") + Canal.Visible(n.Creation) + " (" + (n.CreationExacte == true ? (en ? "exact, audit 4688" : "exacte, audit 4688") : (en ? "approx., first process list that showed it" : "approchée, première liste des processus qui l'a montré")) + ")";
+        }
+
+        // « Lancé par » : parent dans la chaîne (nom, PID, lien) ; tête : nom publié du parent ou son PID, et pourquoi il n'est pas suivi
+        public static string LancePar(Chaine c, NoeudChaine n)
+        {
+            bool en = L.En;
+            if (n == null || !Publie(n)) return null;
+            if (!EstTete(n))
+            {
+                var p = c == null || c.Noeuds == null ? null : c.Noeuds.FirstOrDefault(x => x != null && x.Pid == n.ParentPid);
+                return (p != null ? Canal.Visible(p.Nom) + "  ·  " : "") + "PID " + n.ParentPid;
+            }
+            string nom = Canal.Visible(n.ParentNom);
+            return (nom.Length > 0 ? nom + "  ·  " : "") + (n.ParentPid > 0 ? "PID " + n.ParentPid : (en ? "no parent PID" : "aucun PID parent")) + "  ·  " + (en ? "not in the chain" : "hors de la chaîne");
+        }
+
+        public static string Limites(bool nouveau)
+        {
+            bool en = L.En;
+            string t = en ? "Limits: a chain lists only the ancestors of the flagged processes (their siblings without a signal are never in it); the time of a signal is when it was attached to the chain (3 s cycle), not the time of the original event; an end time is an upper bound (“seen gone at”)."
+                          : "Limites : une chaîne ne contient que les ancêtres des processus signalés (leurs frères sans signal n'y sont jamais) ; l'heure d'un signal est celle de son rattachement à la chaîne (cycle de 3 s), pas celle de l'événement d'origine ; une heure de fin est une borne haute (« vu disparu à »).";
+            if (!nouveau) t += " " + (en ? "This service version does not publish parents, states or signals: the graph follows the indentation of the text view and says nothing of the nature of the links."
+                                         : "Cette version du service ne publie ni parents, ni états, ni signaux : le graphe suit le retrait de la vue texte et ne dit rien de la nature des liens.");
+            return t;
+        }
+
+        // ---- Graphe en couches : parents à gauche, enfants à droite ; répétitions regroupées ; repli au-delà de 40 par couche ----
+
+        // Clé des répétitions : même parent, même programme, même ligne de commande publiée (300 premiers caractères), mêmes codes
+        public static string CleRepetition(NoeudChaine n)
+        {
+            var codes = Signaux(n).Select(s => s.Code ?? "").Distinct().OrderBy(x => x, StringComparer.Ordinal);
+            return n.ParentPid + "\u0001" + (n.Nom ?? "") + "\u0001" + (n.Chemin ?? "") + "\u0001" + (n.LigneCommande ?? "") + "\u0001" + string.Join(",", codes) + "\u0001" + (n.Lien ?? "");
+        }
+
+        // Clé stable d'une case (sélection et focus) : processus ou groupe (PID du premier), fantôme (PID de la tête), repli (couche)
+        public static string CleCase(CaseChaine c)
+        {
+            if (c == null) return null;
+            if (c.Repli) return "r" + c.Couche;
+            if (c.Fantome) return "f" + (c.Enfants.Count > 0 && c.Enfants[0].Premier != null ? c.Enfants[0].Premier.Pid : 0);
+            return (c.Membres.Count > 1 ? "g" : "p") + (c.Premier != null ? c.Premier.Pid : 0);
+        }
+
+        public static GrapheChaine Graphe(Chaine c, bool regrouper, int? choisi)
+        {
+            var g = new GrapheChaine();
+            var noeuds = c == null || c.Noeuds == null ? new List<NoeudChaine>() : c.Noeuds.Where(n => n != null).ToList();
+            bool nouveau = NouveauFormat(c);
+            int k = noeuds.Count;
+            g.Processus = k;
+            var parent = new int[k];
+            var parPid = new Dictionary<long, int>();
+            var pile = new List<int>();
+            for (int i = 0; i < k; i++)
+            {
+                var n = noeuds[i];
+                int p = -1;
+                if (nouveau)
+                {
+                    int j;
+                    // Le service publie un parent avant ses enfants (chaines::chaine_publiee) : seul un nœud déjà vu peut être parent
+                    if (!EstTete(n) && parPid.TryGetValue(n.ParentPid, out j)) p = j;
+                }
+                else
+                {
+                    // Service plus ancien : parent déduit du retrait (dernier nœud de la profondeur au-dessus), comme la vue texte
+                    int prof = Math.Max(0, n.Profondeur);
+                    if (prof > 0 && prof - 1 < pile.Count) p = pile[prof - 1];
+                    if (pile.Count > prof) pile.RemoveRange(prof, pile.Count - prof);
+                    while (pile.Count < prof) pile.Add(p);
+                    pile.Add(i);
+                }
+                if (!parPid.ContainsKey(n.Pid)) parPid[n.Pid] = i;
+                parent[i] = p;
+            }
+            var enfants = new List<int>[k];
+            var racines = new List<int>();
+            for (int i = 0; i < k; i++) enfants[i] = new List<int>();
+            for (int i = 0; i < k; i++) { if (parent[i] >= 0) enfants[parent[i]].Add(i); else racines.Add(i); }
+
+            // Cases dans l'ordre de publication, couche par couche (file) ; fantôme à gauche de chaque tête (étape 1 seulement)
+            var toutes = new List<CaseChaine>();
+            var file = new Queue<KeyValuePair<CaseChaine, List<int>>>();
+            Func<List<int>, CaseChaine, int, CaseChaine> creer = (membres, pere, couche) =>
+            {
+                var cs = new CaseChaine { Id = toutes.Count, Parent = pere, Couche = couche };
+                foreach (int m in membres) cs.Membres.Add(noeuds[m]);
+                cs.Lien = cs.Premier.Lien ?? "";
+                if (pere != null) pere.Enfants.Add(cs);
+                toutes.Add(cs);
+                file.Enqueue(new KeyValuePair<CaseChaine, List<int>>(cs, membres));
+                return cs;
+            };
+            Action<List<int>, CaseChaine, int> regrouperEnfants = (indices, pere, couche) =>
+            {
+                if (!regrouper || !nouveau) { foreach (int i in indices) creer(new List<int> { i }, pere, couche); return; }
+                var ordre = new List<string>();
+                var paquets = new Dictionary<string, List<int>>();
+                foreach (int i in indices)
+                {
+                    string cle = CleRepetition(noeuds[i]);
+                    List<int> l;
+                    if (!paquets.TryGetValue(cle, out l)) { l = new List<int>(); paquets[cle] = l; ordre.Add(cle); }
+                    l.Add(i);
+                }
+                foreach (var cle in ordre) creer(paquets[cle], pere, couche);
+            };
+            foreach (int r in racines)
+            {
+                if (nouveau)
+                {
+                    var n = noeuds[r];
+                    var f = new CaseChaine { Id = toutes.Count, Couche = 0, Fantome = true, Lien = n.Lien ?? "" };
+                    string nom = Canal.Visible(n.ParentNom);
+                    f.Titre = nom.Length > 0 ? nom : n.ParentPid > 0 ? "PID " + n.ParentPid : (L.En ? "no parent" : "aucun parent");
+                    f.Sous = SousFantome(EstTete(n) ? n.Lien : null);
+                    toutes.Add(f);
+                    creer(new List<int> { r }, f, 1);
+                }
+                else creer(new List<int> { r }, null, 0);
+            }
+            while (file.Count > 0)
+            {
+                var x = file.Dequeue();
+                var fils = x.Value.SelectMany(m => enfants[m]).Distinct().OrderBy(m => m).ToList();
+                if (fils.Count > 0) regrouperEnfants(fils, x.Key, x.Key.Couche + 1);
+            }
+
+            // Poids du sous-arbre (somme des scores) : priorité pour rester visible quand une couche dépasse 40 cases
+            for (int i = toutes.Count - 1; i >= 0; i--)
+            {
+                var cs = toutes[i];
+                cs.Poids += cs.Membres.Sum(m => (double)Math.Max(0, m.Score));
+                if (cs.Parent != null) cs.Parent.Poids += cs.Poids;
+            }
+            var chemin = new HashSet<CaseChaine>();
+            if (choisi.HasValue)
+                for (var cs = toutes.FirstOrDefault(x => x.Membres.Any(m => m.Pid == choisi.Value)); cs != null; cs = cs.Parent) chemin.Add(cs);
+            int couches = toutes.Count == 0 ? 0 : toutes.Max(x => x.Couche) + 1;
+            var replis = new List<CaseChaine>();
+            for (int co = 0; co < couches; co++)
+            {
+                var dans = toutes.Where(x => x.Couche == co).ToList();
+                var masquees = dans.Where(x => x.Parent != null && x.Parent.Masquee).ToList();
+                var candidates = dans.Where(x => !(x.Parent != null && x.Parent.Masquee)).ToList();
+                if (candidates.Count > MaxParCouche)
+                {
+                    var gardees = new HashSet<CaseChaine>(candidates.OrderBy(x => chemin.Contains(x) ? 0 : 1).ThenByDescending(x => x.Poids).ThenBy(x => x.Id).Take(MaxParCouche));
+                    masquees.AddRange(candidates.Where(x => !gardees.Contains(x)));
+                }
+                foreach (var m in masquees) m.Masquee = true;
+                if (masquees.Count > 0)
+                {
+                    var rp = new CaseChaine { Id = toutes.Count + replis.Count, Couche = co, Repli = true };
+                    foreach (var m in masquees.OrderBy(x => x.Id)) rp.Replies.AddRange(m.Membres);
+                    rp.Titre = "+" + rp.Replies.Count + " " + (L.En ? "more" : "de plus");
+                    rp.Sous = L.En ? "open the list" : "ouvrir la liste";
+                    replis.Add(rp);
+                }
+            }
+            g.CasesAvantRepli = toutes.Count;
+
+            // Placement en O(n) : une colonne par couche ; feuilles l'une sous l'autre dans l'ordre publié, parent centré sur ses enfants
+            var visibles = toutes.Where(x => !x.Masquee).ToList();
+            double rang = 0;
+            var pileDfs = new Stack<KeyValuePair<CaseChaine, bool>>();
+            foreach (var r in visibles.Where(x => x.Parent == null).Reverse()) pileDfs.Push(new KeyValuePair<CaseChaine, bool>(r, false));
+            while (pileDfs.Count > 0)
+            {
+                var e = pileDfs.Pop();
+                var cs = e.Key;
+                var fils = cs.Enfants.Where(x => !x.Masquee).ToList();
+                if (!e.Value && fils.Count > 0)
+                {
+                    pileDfs.Push(new KeyValuePair<CaseChaine, bool>(cs, true));
+                    for (int i = fils.Count - 1; i >= 0; i--) pileDfs.Push(new KeyValuePair<CaseChaine, bool>(fils[i], false));
+                    continue;
+                }
+                if (fils.Count == 0) { cs.Y = Marge + rang * PasY; rang++; }
+                else cs.Y = (fils[0].Y + fils[fils.Count - 1].Y) / 2;
+                cs.X = Marge + cs.Couche * PasX;
+            }
+            foreach (var rp in replis)
+            {
+                var memes = visibles.Where(x => x.Couche == rp.Couche).ToList();
+                rp.X = Marge + rp.Couche * PasX;
+                rp.Y = memes.Count == 0 ? Marge : memes.Max(x => x.Y) + PasY;
+            }
+            g.Cases = visibles.Concat(replis).ToList();
+            g.Largeur = g.Cases.Count == 0 ? 0 : g.Cases.Max(x => x.X) + LargeurCase + Marge + 8;
+            g.Hauteur = g.Cases.Count == 0 ? 0 : g.Cases.Max(x => x.Y) + HauteurCase + Marge;
+            return g;
+        }
+
+        // Clavier du graphe : Gauche = parent, Droite = premier enfant, Haut/Bas = case voisine de la même couche, Début = première
+        public static CaseChaine Voisin(GrapheChaine g, CaseChaine c, string touche)
+        {
+            if (g == null || g.Cases.Count == 0) return null;
+            if (c == null || touche == "Debut") return g.Cases.OrderBy(x => x.Couche).ThenBy(x => x.Y).First();
+            switch (touche)
+            {
+                case "Gauche": return c.Parent != null && g.Cases.Contains(c.Parent) ? c.Parent : c;
+                case "Droite": var f = c.Enfants.Where(x => g.Cases.Contains(x)).OrderBy(x => x.Y).FirstOrDefault(); return f ?? c;
+                case "Haut": var h = g.Cases.Where(x => x.Couche == c.Couche && x.Y < c.Y).OrderByDescending(x => x.Y).FirstOrDefault(); return h ?? c;
+                case "Bas": var b = g.Cases.Where(x => x.Couche == c.Couche && x.Y > c.Y).OrderBy(x => x.Y).FirstOrDefault(); return b ?? c;
+            }
+            return c;
+        }
+
+        // Nom lu par le Narrateur pour une case (la couleur ne porte jamais le sens seule)
+        public static string NomCase(CaseChaine c)
+        {
+            bool en = L.En;
+            if (c == null) return "";
+            if (c.Repli) return c.Titre + ", " + (en ? "folded boxes" : "cases repliées");
+            if (c.Fantome) return c.Titre + ", " + c.Sous + ", " + (en ? "parent not in the chain" : "parent hors de la chaîne");
+            var n = c.Premier;
+            string t = Canal.Visible(n.Nom) + (c.Membres.Count > 1 ? ", ×" + c.Membres.Count : ", PID " + n.Pid);
+            if (c.Score > 0) t += ", +" + c.Score;
+            if (c.Membres.Count == 1 && Publie(n)) t += ", " + (n.Vivant == true ? (en ? "running" : "en cours") : (en ? "exited" : "terminé"));
+            if (c.Membres.Count > 1) t += ", " + string.Format(en ? "{0} running" : "{0} en cours", c.Membres.Count(EnCours));
+            return t;
+        }
+
+        // Copie du dossier : en-tête de la chaîne puis une ligne par processus (valeurs d'origine échappées, comme Copie)
+        public static string CopieDossier(Chaine c, Alerte a)
+        {
+            if (c == null) return "";
+            var l = new List<string> { VueReseauFluent.Copie(c.Resume, "score " + c.Score, c.Depuis, a == null ? "" : a.Regle + " " + a.Niveau + " " + a.Heure) };
+            foreach (var n in c.Noeuds ?? new List<NoeudChaine>())
+                if (n != null) l.Add(VueReseauFluent.Copie(new string(' ', Math.Min(Math.Max(n.Profondeur, 0), 32) * 2) + (n.Nom ?? ""), n.Pid.ToString(), n.Score > 0 ? n.Score.ToString() : "", n.Raisons, n.LigneCommande, n.Chemin));
+            return string.Join("\r\n", l);
+        }
     }
 
     // Lecture d'etat.json hors du fil de l'interface, une à la fois, commune aux pages Connexions et Chaînes (U4a)
@@ -2883,7 +3427,8 @@ namespace DeR4Tizer
                 {
                     var e = Commun.Lire<Etat>("etat.json");
                     string p = e == null ? null : VueReseauFluent.Panne(e, collecte);
-                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; illisible = e == null; if (e != null) { misAJour = e.MisAJour; panne = p; Recevoir(e); } Briques.GarderFocus(Afficher, liste); } }));
+                    object annexes = Annexes();
+                    Dispatcher.BeginInvoke((Action)(() => { if (numero == chargement) { lu = true; illisible = e == null; RecevoirAnnexes(annexes); if (e != null) { misAJour = e.MisAJour; panne = p; Recevoir(e); } Briques.GarderFocus(Afficher, liste); } }));
                 }
                 finally { System.Threading.Interlocked.Exchange(ref enCours, 0); }
             });
@@ -2892,6 +3437,9 @@ namespace DeR4Tizer
         // Illisible : la dernière liste reste, plutôt qu'un vide qui rassure
         protected abstract void Recevoir(Etat e);
         protected abstract void Afficher();
+        // Autres fichiers lus hors du fil de l'interface avec etat.json (page Chaînes : alertes et incidents, T-20)
+        protected virtual object Annexes() { return null; }
+        protected virtual void RecevoirAnnexes(object annexes) { }
 
         protected void Actions(StackPanel pile, List<string> actions, Action<string> agir)
         {
@@ -3005,28 +3553,180 @@ namespace DeR4Tizer
         }
     }
 
-    // Page Chaînes en WPF (U4a) : chaînes de processus lues dans etat.json, arbre dans le panneau de détails ; mêmes
-    // actions et mêmes questions que le menu de la liste d'aujourd'hui (ISourceReponses)
+    // Case du graphe d'une chaîne (T-20) : un processus, un groupe de répétitions (×N), une case fantôme (parent non suivi de
+    // la tête, hors de la chaîne) ou un repli « +N de plus » (au-delà de 40 cases dans une couche)
+    public class CaseChaine
+    {
+        public int Id, Couche;
+        public readonly List<NoeudChaine> Membres = new List<NoeudChaine>();
+        public CaseChaine Parent;
+        public readonly List<CaseChaine> Enfants = new List<CaseChaine>();
+        public bool Fantome, Repli, Masquee;
+        public string Titre, Sous, Lien;
+        public readonly List<NoeudChaine> Replies = new List<NoeudChaine>();
+        public double X, Y, Poids;
+        public NoeudChaine Premier { get { return Membres.Count > 0 ? Membres[0] : null; } }
+        public int Score { get { return Membres.Count == 0 ? 0 : Membres.Max(m => m.Score); } }
+    }
+
+    public class GrapheChaine
+    {
+        public List<CaseChaine> Cases = new List<CaseChaine>();
+        public int Processus, CasesAvantRepli;
+        public double Largeur, Hauteur;
+    }
+
+    // Page Chaînes en WPF (U4a ; T-20, étape 2) : chaînes de processus lues dans etat.json. Deux vues : « Graphe » (dossier
+    // d'analyse : bandeau, résumé, que faire, filtres, graphe en couches, panneau de détail) et « Texte » (la liste et l'arbre
+    // en retrait d'avant T-20). Mêmes actions et mêmes questions que le menu de la liste d'aujourd'hui (ISourceReponses) ;
+    // aucune commande ni réglage nouveau
     class PageChainesFluent : PageEtatServiceFluent
     {
         List<Chaine> chaines = new List<Chaine>();
         string choisie;
-        int? noeud;             // PID du processus choisi dans l'arbre
+        int? noeud;             // vue texte : PID du processus choisi dans l'arbre
+        // Vue retenue pour la session de l'interface (aucun réglage écrit)
+        static bool vueTexte;
+        // Vue graphe : case choisie (CleCase, ou « p<PID> » pour un membre d'un groupe), case du focus clavier, filtre, regroupement
+        string choixCase, courant;
+        int filtre;
+        bool regrouper = true, tousMembres, resumeOuvert = true, faireOuvert = true, tronquees, tousSelecteur;
+        double zoom = 1;
+        bool zoomAuto = true;
+        bool amener;            // la prochaine reconstruction amène la case choisie à la vue (choix de l'utilisateur)   // ajusté à la largeur (entre 60 et 100 %) tant que l'utilisateur n'a pas choisi un zoom
+        List<Alerte> alertes = new List<Alerte>();      // null : alertes.json illisible
+        List<IncidentSuivi> incidents = new List<IncidentSuivi>();
+        DateTime dateAlertes = DateTime.MinValue, dateIncidents = DateTime.MinValue;
+        readonly Action<string> ouvrirAlerte;
+        // Vue graphe : conteneurs gardés d'un rafraîchissement à l'autre (le focus clavier reste sur le graphe)
+        readonly ContentControl hoteSelecteur = new ContentControl(), hoteBandeau = new ContentControl(), hoteResume = new ContentControl(), hoteFiltres = new ContentControl(), hoteDetail = new ContentControl(), hoteEntete = new ContentControl(), hoteBas = new ContentControl();
+        readonly Border hoteGraphe = new Border { Focusable = true, CornerRadius = new CornerRadius(6), Padding = new Thickness(4) };
+        readonly ScrollViewer defileGraphe = new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false, MaxHeight = 460 };
+        readonly ScaleTransform echelle = new ScaleTransform(1, 1);
+        GrapheChaine graphe;
+        readonly Dictionary<string, FrameworkElement> elementsCases = new Dictionary<string, FrameworkElement>();
+        System.Windows.Shapes.Rectangle anneau;
+        readonly StackPanel bascule = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        ScrollViewer defileListe;
+        Border panneauDetail;
+        bool grapheConstruit;
+        Grid grilleGraphe;
 
-        public PageChainesFluent(ISourceReponses source) : base(source, "Processus", false) { Afficher(); }
+        public PageChainesFluent(ISourceReponses source) : this(source, null) { }
 
-        protected override void Recevoir(Etat e) { chaines = VueChainesFluent.Suspectes(e.Chaines); }
+        public PageChainesFluent(ISourceReponses source, Action<string> ouvrirAlerte) : base(source, "Processus", true)
+        {
+            this.ouvrirAlerte = ouvrirAlerte;
+            foreach (UIElement e in Children)
+            {
+                var sv = e as ScrollViewer;
+                if (sv != null && sv.Content == liste) defileListe = sv;
+                var b = e as Border;
+                if (b != null && Grid.GetColumn(b) == 1) panneauDetail = b;
+            }
+            hoteGraphe.FocusVisualStyle = Jetons.StyleFocus();
+            hoteGraphe.Background = Jetons.Pinceau(Jetons.Fond);
+            hoteGraphe.Child = defileGraphe;
+            hoteGraphe.KeyDown += ToucheGraphe;
+            hoteGraphe.GotKeyboardFocus += (s, e) => PlacerAnneau();
+            hoteGraphe.LostKeyboardFocus += (s, e) => PlacerAnneau();
+            hoteGraphe.MouseLeftButtonDown += (s, e) => hoteGraphe.Focus();
+            hoteGraphe.SizeChanged += (s, e) => { if (zoomAuto) AjusterLargeur(); };
+            outils.Children.Add(bascule);
+            Afficher();
+        }
+
+        protected override void Recevoir(Etat e) { chaines = VueChainesFluent.Suspectes(e.Chaines); tronquees = e.ChainesTronquees; }
+
+        // alertes.json et suivi-incidents.json : relus seulement quand ils changent (alerte liée par l'entité de la chaîne)
+        protected override object Annexes()
+        {
+            var r = new object[4];
+            var da = DateFichier("alertes.json");
+            // Lecture manquée (fichier illisible ou en cours d'écriture) : « ? » affiché, relu au prochain tour (date oubliée)
+            if (da != dateAlertes) { bool absent; var a = LectureFluent.Lire<List<Alerte>>("alertes.json", out absent); r[0] = absent ? new List<Alerte>() : a; r[1] = r[0] == null ? DateTime.MinValue : da; }
+            var di = DateFichier("suivi-incidents.json");
+            if (di != dateIncidents) { bool absent; var i = LectureFluent.Lire<List<IncidentSuivi>>("suivi-incidents.json", out absent); r[2] = absent ? new List<IncidentSuivi>() : i; r[3] = r[2] == null ? DateTime.MinValue : di; }
+            return r;
+        }
+
+        protected override void RecevoirAnnexes(object o)
+        {
+            var r = o as object[];
+            if (r == null) return;
+            if (r[1] is DateTime) { alertes = r[0] as List<Alerte>; dateAlertes = (DateTime)r[1]; }
+            if (r[3] is DateTime) { incidents = r[2] as List<IncidentSuivi> ?? new List<IncidentSuivi>(); dateIncidents = (DateTime)r[3]; }
+        }
+
+        static DateTime DateFichier(string nom)
+        {
+            try { var f = System.IO.Path.Combine(Commun.Dossier, nom); return System.IO.File.Exists(f) ? System.IO.File.GetLastWriteTimeUtc(f) : DateTime.MinValue.AddTicks(1); } catch { return DateTime.MinValue.AddTicks(2); }
+        }
+
+        string Resume()
+        {
+            string t = VueChainesFluent.Resume(chaines, lu, illisible, misAJour, panne);
+            if (lu && tronquees) t += "\n" + (L.En ? "Some chains, processes or signals were left out of etat.json by the service (size budget): the list is incomplete." : "Des chaînes, processus ou signaux ont été laissés hors d'etat.json par le service (budget de taille) : la liste est incomplète.");
+            return t;
+        }
 
         protected override void Afficher()
         {
-            resume.Text = VueChainesFluent.Resume(chaines, lu, illisible, misAJour, panne);
-            resume.Foreground = Jetons.Pinceau(illisible || panne != null ? Jetons.Attention : chaines.Any(c => c.Score >= VueChainesFluent.SeuilChaine) ? Jetons.Danger : Jetons.TexteSecondaire);
+            resume.Text = Resume();
+            resume.Foreground = Jetons.Pinceau(illisible || panne != null || tronquees ? Jetons.Attention : chaines.Any(c => c.Score >= VueChainesFluent.SeuilChaine) ? Jetons.Danger : Jetons.TexteSecondaire);
+            Basculer();
+            if (vueTexte) AfficherTexte(); else AfficherGraphe();
+        }
+
+        // Bascule Graphe / Texte, en haut à droite ; le choix est retenu pour la session
+        void Basculer()
+        {
+            bascule.Children.Clear();
+            foreach (var texte in new[] { false, true })
+            {
+                bool t = texte, actif = vueTexte == t;
+                var b = new Button
+                {
+                    Content = t ? (L.En ? "Text" : "Texte") : (L.En ? "Graph" : "Graphe"), Padding = new Thickness(14, 4, 14, 4), Margin = new Thickness(6, 0, 0, 10), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte)
+                };
+                b.Template = Coquille.ModeleBouton();
+                b.FocusVisualStyle = Jetons.StyleFocus();
+                System.Windows.Automation.AutomationProperties.SetName(b, (L.En ? "View: " : "Vue : ") + b.Content + (actif ? (L.En ? ", selected" : ", choisie") : ""));
+                b.Click += (s, e) =>
+                {
+                    if (vueTexte == t) return;
+                    // La sélection suit d'une vue à l'autre
+                    if (t) { int pid; if (choixCase != null && choixCase.Length > 1 && (choixCase[0] == 'p' || choixCase[0] == 'g') && int.TryParse(choixCase.Substring(1), out pid)) noeud = pid; }
+                    else if (noeud.HasValue) choixCase = "p" + noeud.Value;
+                    vueTexte = t; vu = null; grapheConstruit = false;
+                    Afficher();
+                    var cible = bascule.Children.Count > (t ? 1 : 0) ? bascule.Children[t ? 1 : 0] : null;
+                    if (cible != null) cible.Dispatcher.BeginInvoke(new Action(() => cible.Focus()), System.Windows.Threading.DispatcherPriority.Input);
+                };
+                bascule.Children.Add(b);
+            }
+        }
+
+        // ---------------- Vue texte : la page d'avant T-20 ----------------
+
+        void AfficherTexte()
+        {
+            if (grapheConstruit || panneauDetail.Visibility != Visibility.Visible)
+            {
+                grapheConstruit = false;
+                panneauDetail.Visibility = Visibility.Visible;
+                Grid.SetColumnSpan(defileListe, 1);
+                KeyboardNavigation.SetTabNavigation(liste, KeyboardNavigationMode.Once);
+                KeyboardNavigation.SetDirectionalNavigation(liste, KeyboardNavigationMode.Contained);
+                vu = null;
+            }
             var c0 = chaines.FirstOrDefault(c => VueChainesFluent.Cle(c) == choisie) ?? chaines.FirstOrDefault();
             choisie = c0 == null ? null : VueChainesFluent.Cle(c0);
             var noeuds = c0 == null ? new List<NoeudChaine>() : (c0.Noeuds ?? new List<NoeudChaine>());
             var n0 = noeuds.FirstOrDefault(n => n.Pid == noeud) ?? noeuds.OrderByDescending(n => n.Score).FirstOrDefault();
             noeud = n0 == null ? (int?)null : n0.Pid;
-            string signature = choisie + "#" + noeud + "#" + resume.Text + "#" + string.Join(";", chaines.Select(c => VueChainesFluent.Cle(c) + "|" + c.Score + "|" + string.Join(",", (c.Noeuds ?? new List<NoeudChaine>()).Select(n => n.Pid + ":" + n.Score))));
+            string signature = "T#" + choisie + "#" + noeud + "#" + resume.Text + "#" + string.Join(";", chaines.Select(c => VueChainesFluent.Cle(c) + "|" + c.Score + "|" + string.Join(",", (c.Noeuds ?? new List<NoeudChaine>()).Select(n => n.Pid + ":" + n.Score + ":" + n.Vivant + ":" + n.Chemin))));
             if (signature == vu) return;
             vu = signature;
             liste.Children.Clear();
@@ -3084,12 +3784,28 @@ namespace DeR4Tizer
             {
                 pile.Children.Add(new TextBlock { Text = Canal.Visible(n0.Nom), FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 14, 0, 0), TextWrapping = TextWrapping.Wrap });
                 Lignes(pile, VueChainesFluent.Detail(n0));
+                NotesActions(pile, n0);
                 Actions(pile, VueChainesFluent.Actions(n0), a => Agir(n0, a));
             }
             detail.Content = pile;
             // Accessibilité (défaut 4) : si le focus clavier était dans le détail, le rendre au nœud ouvert après reconstruction
             var cibleNoeud = noeudFocus ?? noeudChoisi;
             if (rendreFocus && cibleNoeud != null) cibleNoeud.Dispatcher.BeginInvoke(new Action(() => cibleNoeud.Focus()), System.Windows.Threading.DispatcherPriority.Input);
+        }
+
+        // Pourquoi une action manque (processus terminé, chemin coupé) : dit au lieu de cacher
+        static void NotesActions(StackPanel pile, NoeudChaine n)
+        {
+            bool en = L.En;
+            if (VueChainesFluent.Termine(n) && n.Pid > 4)
+                pile.Children.Add(Note(en ? "This process has exited: kill and suspend are not offered (its PID may now belong to another program)." : "Ce processus est terminé : tuer et suspendre ne sont pas proposés (son PID peut désigner aujourd'hui un autre programme)."));
+            if (VueChainesFluent.CheminCoupe(n.Chemin))
+                pile.Children.Add(Note(en ? "Path cut by the service (too long): no action on the program file is offered." : "Chemin coupé par le service (trop long) : aucune action sur le fichier du programme n'est proposée."));
+        }
+
+        static TextBlock Note(string texte, double haut = 8)
+        {
+            return new TextBlock { Text = texte, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, haut, 0, 4) };
         }
 
         void Agir(NoeudChaine n, string action)
@@ -3099,6 +3815,741 @@ namespace DeR4Tizer
             if (action == "emplacement") source.OuvrirEmplacement(n.Chemin);
             else source.AgirElement(n, action);
             Charger();
+        }
+
+        // ---------------- Vue graphe : dossier d'analyse ----------------
+
+        void ConstruireGraphe()
+        {
+            grapheConstruit = true;
+            panneauDetail.Visibility = Visibility.Collapsed;
+            Grid.SetColumnSpan(defileListe, 2);
+            // Toute la page défile ; Tab parcourt les contrôles et entre une fois dans le graphe (ses flèches lui appartiennent)
+            KeyboardNavigation.SetTabNavigation(liste, KeyboardNavigationMode.Continue);
+            KeyboardNavigation.SetDirectionalNavigation(liste, KeyboardNavigationMode.None);
+            liste.Children.Clear();
+            liste.Children.Add(hoteSelecteur);
+            liste.Children.Add(hoteBandeau);
+            liste.Children.Add(hoteResume);
+            liste.Children.Add(hoteFiltres);
+            // Graphe et détail construits une seule fois : leurs conteneurs gardent leur parent d'une bascule à l'autre
+            if (grilleGraphe == null)
+            {
+                var gauche = new StackPanel();
+                gauche.Children.Add(hoteEntete);
+                gauche.Children.Add(hoteGraphe);
+                gauche.Children.Add(hoteBas);
+                var carteD = Carte(hoteDetail, 20);
+                carteD.VerticalAlignment = VerticalAlignment.Top;
+                grilleGraphe = DeuxColonnes(Carte(gauche, 16), carteD, 380);
+            }
+            liste.Children.Add(grilleGraphe);
+            vu = null;
+        }
+
+        static Border Carte(UIElement contenu, double pad)
+        {
+            return new Border { Background = Jetons.Pinceau(Jetons.Carte), CornerRadius = new CornerRadius(8), Padding = new Thickness(pad, pad - 2, pad, pad), Child = contenu };
+        }
+
+        static Grid DeuxColonnes(UIElement g, UIElement d, double droite)
+        {
+            var grille = new Grid();
+            grille.ColumnDefinitions.Add(new ColumnDefinition());
+            grille.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
+            grille.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(droite) });
+            grille.Children.Add(g); Grid.SetColumn(d, 2); grille.Children.Add(d);
+            return grille;
+        }
+
+        Chaine ChaineChoisie()
+        {
+            var c0 = chaines.FirstOrDefault(c => VueChainesFluent.Cle(c) == choisie) ?? chaines.FirstOrDefault();
+            choisie = c0 == null ? null : VueChainesFluent.Cle(c0);
+            return c0;
+        }
+
+        // Case de la sélection : « g »/« p » + PID (groupe ou processus), « f » fantôme, « r » repli
+        CaseChaine CaseDe(string cle)
+        {
+            if (graphe == null || cle == null || cle.Length < 2) return null;
+            var exacte = graphe.Cases.FirstOrDefault(x => VueChainesFluent.CleCase(x) == cle);
+            if (exacte != null) return exacte;
+            int pid;
+            if ((cle[0] == 'p' || cle[0] == 'g') && int.TryParse(cle.Substring(1), out pid)) return graphe.Cases.FirstOrDefault(x => x.Membres.Any(m => m.Pid == pid));
+            return null;
+        }
+
+        int? PidChoisi()
+        {
+            int pid;
+            if (choixCase != null && choixCase.Length > 1 && (choixCase[0] == 'p' || choixCase[0] == 'g') && int.TryParse(choixCase.Substring(1), out pid)) return pid;
+            return null;
+        }
+
+        void AfficherGraphe()
+        {
+            if (!grapheConstruit) ConstruireGraphe();
+            var c0 = ChaineChoisie();
+            if (c0 != null && choixCase == null)
+            {
+                var plus = (c0.Noeuds ?? new List<NoeudChaine>()).Where(n => n != null).OrderByDescending(n => n.Score).FirstOrDefault();
+                if (plus != null) choixCase = "g" + plus.Pid;
+            }
+            if (c0 != null && !VueChainesFluent.FiltrePropose(c0, filtre)) filtre = 0;
+            var lien = VueChainesFluent.AlerteLiee(c0, alertes);
+            var inc = VueChainesFluent.IncidentLie(c0, incidents);
+            string signature = "G#" + choisie + "#" + choixCase + "#" + courant + "#" + filtre + "#" + regrouper + "#" + tousMembres + "#" + resumeOuvert + "#" + faireOuvert + "#" + resume.Text + "#" + (alertes == null ? "?" : lien == null ? "-" : lien.Id + lien.Niveau) + "#" + (inc == null ? "-" : inc.Id + inc.Etat) + "#"
+                + string.Join(";", chaines.Select(c => VueChainesFluent.Cle(c) + "|" + c.Score + "|" + c.NoeudsTronques + "|" + (c == c0 ? string.Join(",", (c.Noeuds ?? new List<NoeudChaine>()).Where(n => n != null).Select(n => n.Pid + ":" + n.Score + ":" + n.Vivant + ":" + n.Fin + ":" + n.Lien + ":" + VueChainesFluent.Signaux(n).Count + ":" + n.SignauxTronques + ":" + n.Chemin)) : (c.Noeuds == null ? 0 : c.Noeuds.Count).ToString())));
+            if (signature == vu) return;
+            vu = signature;
+            bool focusFiltres = hoteFiltres.IsKeyboardFocusWithin;
+            hoteSelecteur.Content = Selecteur();
+            if (c0 == null)
+            {
+                hoteBandeau.Content = hoteResume.Content = hoteFiltres.Content = hoteEntete.Content = hoteBas.Content = null;
+                defileGraphe.Content = null; graphe = null;
+                hoteDetail.Content = new TextBlock { Text = L.En ? "Select a chain to read who launched what." : "Sélectionnez une chaîne pour lire qui a lancé quoi.", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap };
+                ((FrameworkElement)liste.Children[liste.Children.Count - 1]).Visibility = lu ? Visibility.Collapsed : Visibility.Visible;
+                return;
+            }
+            ((FrameworkElement)liste.Children[liste.Children.Count - 1]).Visibility = Visibility.Visible;
+            hoteBandeau.Content = Bandeau(c0);
+            hoteResume.Content = ResumeEtFaire(c0, lien, inc);
+            hoteFiltres.Content = BarreFiltres(c0);
+            if (focusFiltres) RendreFocusFiltres();
+            graphe = VueChainesFluent.Graphe(c0, regrouper, PidChoisi());
+            var choix = CaseDe(choixCase);
+            if (choix == null && graphe.Cases.Count > 0) { choix = graphe.Cases.FirstOrDefault(x => !x.Fantome && !x.Repli) ?? graphe.Cases[0]; choixCase = VueChainesFluent.CleCase(choix); }
+            if (CaseDe(courant) == null) courant = choix == null ? null : VueChainesFluent.CleCase(choix);
+            hoteEntete.Content = EnteteGraphe(c0);
+            DessinerGraphe(c0, choix);
+            hoteBas.Content = BasGraphe(c0);
+            hoteDetail.Content = DetailCase(c0, choix, lien);
+        }
+
+        // Sélecteur : une pastille par chaîne suspecte (niveau en mots) ; Tab y entre une fois, les flèches passent de l'une à l'autre
+        UIElement Selecteur()
+        {
+            var w = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+            KeyboardNavigation.SetTabNavigation(w, KeyboardNavigationMode.Once);
+            KeyboardNavigation.SetDirectionalNavigation(w, KeyboardNavigationMode.Contained);
+            // Au plus 10 pastilles (plus la chaîne choisie) tant que la liste n'est pas dépliée ; la vue texte les liste toutes
+            var montrees = tousSelecteur || chaines.Count <= 12 ? chaines : chaines.Where((c, i) => i < 10 || VueChainesFluent.Cle(c) == choisie).ToList();
+            foreach (var c in montrees)
+            {
+                string cle = VueChainesFluent.Cle(c);
+                int g = VueChainesFluent.Gravite(c);
+                int n = c.Noeuds == null ? 0 : c.Noeuds.Count;
+                var ligne = Briques.Ligne(Canal.Visible(c.Resume), Briques.NiveauChaine(g), "score " + c.Score + "  ·  " + n + " " + (L.En ? "process(es)" : "processus"), g, cle == choisie, false,
+                    () => { if (choisie == cle) return; choisie = cle; choixCase = null; courant = null; tousMembres = false; zoomAuto = true; Afficher(); });
+                ligne.MaxWidth = 380; ligne.Margin = new Thickness(0, 0, 8, 6);
+                w.Children.Add(ligne);
+            }
+            if (montrees.Count < chaines.Count)
+                w.Children.Add(Bouton(string.Format(L.En ? "Show the {0} other chains" : "Montrer les {0} autres chaînes", chaines.Count - montrees.Count), false, () => { tousSelecteur = true; vu = null; Afficher(); }));
+            return w;
+        }
+
+        UIElement Bandeau(Chaine c)
+        {
+            var cases = VueChainesFluent.Bandeau(c, alertes, incidents);
+            var g = new Grid { Margin = new Thickness(0, 4, 0, 12) };
+            for (int i = 0; i < cases.Count; i++)
+            {
+                if (i > 0) g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+                g.ColumnDefinitions.Add(new ColumnDefinition());
+            }
+            for (int i = 0; i < cases.Count; i++)
+            {
+                var x = cases[i];
+                var couleur = Briques.Couleur(x.Gravite);
+                var b = new Border { Background = Jetons.Pinceau(Jetons.Carte), BorderBrush = Jetons.Pinceau(couleur), BorderThickness = new Thickness(3, 0, 0, 0), CornerRadius = new CornerRadius(Jetons.Rayon), Padding = new Thickness(12, 9, 10, 10) };
+                var p = new StackPanel();
+                p.Children.Add(new TextBlock { Text = x.Titre, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+                p.Children.Add(new TextBlock { Text = x.Valeur, FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(x.Gravite > 0 ? couleur : Jetons.Texte), Margin = new Thickness(0, 3, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
+                p.Children.Add(new TextBlock { Text = x.Sous, FontSize = 11.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+                b.Child = p;
+                System.Windows.Automation.AutomationProperties.SetName(b, x.Titre + " : " + x.Valeur + ", " + x.Sous);
+                Grid.SetColumn(b, i * 2); g.Children.Add(b);
+            }
+            return g;
+        }
+
+        // Titre de section repliable (Résumé, Que faire) : bouton, état dit par le chevron et lu par le Narrateur
+        Button TitreSection(string texte, string droite, bool ouvert, Action basculer)
+        {
+            // Titre à gauche, toujours entier ; précision à droite, coupée si la place manque
+            var d = new Grid();
+            d.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            d.ColumnDefinitions.Add(new ColumnDefinition());
+            if (!string.IsNullOrEmpty(droite)) { var t = new TextBlock { Text = droite, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(12, 0, 0, 0), ToolTip = droite }; Grid.SetColumn(t, 1); d.Children.Add(t); }
+            var titre = new TextBlock { FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.Texte) };
+            titre.Inlines.Add(new System.Windows.Documents.Run(ouvert ? "  " : "  ") { FontFamily = Jetons.Icones, FontSize = 11, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+            titre.Inlines.Add(new System.Windows.Documents.Run(texte));
+            d.Children.Add(titre);
+            var b = new Button { Content = d, HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0, 0, 0, ouvert ? 8 : 0), Cursor = Cursors.Hand, Foreground = Jetons.Pinceau(Jetons.Texte) };
+            b.Template = Coquille.ModeleBouton();
+            b.FocusVisualStyle = Jetons.StyleFocus();
+            System.Windows.Automation.AutomationProperties.SetName(b, texte + ", " + (ouvert ? (L.En ? "expanded" : "ouvert") : (L.En ? "collapsed" : "replié")));
+            b.Click += (s, e) => { basculer(); Afficher(); };
+            return b;
+        }
+
+        UIElement ResumeEtFaire(Chaine c, Alerte lien, IncidentSuivi inc)
+        {
+            bool en = L.En;
+            bool nouveau = VueChainesFluent.NouveauFormat(c);
+            var chrono = VueChainesFluent.Chronologie(c);
+            // Résumé : une phrase de faits, puis la chronologie des signaux par code ; jamais une interprétation
+            var res = new StackPanel();
+            res.Children.Add(TitreSection(en ? "Summary" : "Résumé", resumeOuvert ? (en ? "built from the signals, nothing guessed" : "construit à partir des signaux, rien de deviné") : VueChainesFluent.Phrase(c), resumeOuvert, () => resumeOuvert = !resumeOuvert));
+            if (resumeOuvert)
+            {
+                res.Children.Add(new TextBlock { Text = VueChainesFluent.Phrase(c), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10) });
+                foreach (var l in chrono.Take(60))
+                {
+                    var g = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(nouveau ? 64 : 0) });
+                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(104) });
+                    g.ColumnDefinitions.Add(new ColumnDefinition());
+                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+                    g.Children.Add(new TextBlock { Text = l.Heure, FontFamily = Briques.Chasse, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 1, 0, 0) });
+                    var nom = new TextBlock { Text = l.Nom + (l.Fois > 1 ? " ×" + l.Fois : ""), FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = l.Fois > 1 ? string.Format(en ? "{0} times, {1} to {2}" : "{0} fois, de {1} à {2}", l.Fois, l.Heure, l.Derniere) : l.Nom + "  ·  PID " + l.Pid }; Grid.SetColumn(nom, 1); g.Children.Add(nom);
+                    var lib = new TextBlock { Text = l.Libelle + (l.Regle.Length > 0 ? " (" + l.Regle + ")" : ""), TextWrapping = TextWrapping.Wrap, FontSize = 13 }; Grid.SetColumn(lib, 2); g.Children.Add(lib);
+                    var sc = new TextBlock { Text = "+" + l.Score, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(c.Score >= VueChainesFluent.SeuilChaine ? 2 : l.Score >= Commun.SeuilAlerte ? 1 : 0)), HorizontalAlignment = HorizontalAlignment.Right }; Grid.SetColumn(sc, 3); g.Children.Add(sc);
+                    res.Children.Add(g);
+                }
+                if (chrono.Count > 60) res.Children.Add(Note(string.Format(en ? "{0} more signal(s): see each process in the graph or the text view." : "{0} signal(s) de plus : voir chaque processus dans le graphe ou la vue texte.", chrono.Count - 60), 2));
+                int non = VueChainesFluent.SignauxNonPublies(c);
+                if (non > 0) res.Children.Add(Note(string.Format(en ? "{0} signal(s) not published by the service (limit of 20 per process or size budget); they still count in the score." : "{0} signal(s) non publié(s) par le service (20 par processus au plus, ou budget de taille) ; ils comptent toujours dans le score.", non), 2));
+                var tech = VueChainesFluent.Techniques(c);
+                if (tech.Count > 0) res.Children.Add(Note((en ? "Techniques: " : "Techniques : ") + string.Join(", ", tech), 6));
+            }
+            // Que faire : conseils de l'alerte liée ; tuer et suspendre seulement sur un processus encore en cours
+            var faire = new StackPanel();
+            var vivants = VueChainesFluent.Vivants(c);
+            string droiteF = !nouveau ? "" : string.Format(en ? "{0} process(es) still run" : "{0} processus encore en cours", vivants.Count);
+            faire.Children.Add(TitreSection(en ? "What to do" : "Que faire", faireOuvert ? (lien != null ? (en ? "from the linked alert" : "d'après l'alerte liée") : "") : droiteF, faireOuvert, () => faireOuvert = !faireOuvert));
+            if (faireOuvert)
+            {
+                int k = 1;
+                if (!nouveau) faire.Children.Add(Etape(k++, en ? "This service version does not say which processes still run: act on a process from the graph or the text view." : "Cette version du service ne dit pas quels processus tournent encore : agissez sur un processus depuis le graphe ou la vue texte.", null));
+                else if (vivants.Count == 0) faire.Children.Add(Etape(k++, en ? "No process of this chain is still running: there is nothing to kill or suspend." : "Aucun processus de cette chaîne ne tourne encore : rien à tuer ni à suspendre.", null));
+                else
+                {
+                    var cible = VueChainesFluent.Cible(c);
+                    string noms = string.Join(", ", vivants.Take(4).Select(n => Canal.Visible(n.Nom) + " " + n.Pid)) + (vivants.Count > 4 ? ", …" : "");
+                    var boutons = new List<UIElement>();
+                    if (source != null && cible != null)
+                    {
+                        boutons.Add(Bouton(string.Format(en ? "Kill {0} (PID {1}) and its descendants" : "Tuer {0} (PID {1}) et sa descendance", Canal.Visible(cible.Nom), cible.Pid), true, () => Agir(cible, "tuerChaine")));
+                        boutons.Add(Bouton(string.Format(en ? "Suspend (PID {0})" : "Suspendre (PID {0})", cible.Pid), false, () => Agir(cible, "suspendre")));
+                    }
+                    faire.Children.Add(Etape(k++, string.Format(en ? "Kill the chain: {0} process(es) still run ({1})." : "Tuer la chaîne : {0} processus tournent encore ({1}).", vivants.Count, noms),
+                        en ? "state read in etat.json; the same confirmation as everywhere else" : "état lu dans etat.json ; même confirmation que partout ailleurs", boutons.ToArray()));
+                }
+                if (lien != null && !string.IsNullOrWhiteSpace(lien.Conseil))
+                    faire.Children.Add(Etape(k++, Canal.Visible(L.T(lien.Conseil)), string.Format(en ? "advice of the linked alert {0} (service text)" : "conseil de l'alerte liée {0} (texte du service)", Canal.Visible(lien.Regle))));
+                if (inc != null) faire.Children.Add(Etape(k++, string.Format(en ? "Follow the response in the incident ({0})." : "Suivez la réponse dans l'incident ({0}).", VueChainesFluent.EtatIncident(inc)), Canal.Visible(inc.Id)));
+                var fin = new List<UIElement>();
+                if (lien != null && ouvrirAlerte != null) { string id = lien.Id; fin.Add(Bouton(en ? "Open the linked alert" : "Ouvrir l'alerte liée", false, () => ouvrirAlerte(id))); }
+                fin.Add(Bouton(en ? "Copy the dossier" : "Copier le dossier", false, () => VueReseauFluent.Copier(VueChainesFluent.CopieDossier(c, lien))));
+                faire.Children.Add(Etape(k++, null, null, fin.ToArray()));
+            }
+            var gauche = Carte(res, 16);
+            var droite = Carte(faire, 16);
+            var grille = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+            grille.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(11, GridUnitType.Star) });
+            grille.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
+            grille.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(9, GridUnitType.Star) });
+            grille.Children.Add(gauche); Grid.SetColumn(droite, 2); grille.Children.Add(droite);
+            return grille;
+        }
+
+        static UIElement Etape(int n, string texte, string source, params UIElement[] boutons)
+        {
+            var d = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+            if (texte != null)
+            {
+                var rond = new Border { Width = 22, Height = 22, CornerRadius = new CornerRadius(11), Background = Jetons.Pinceau(Jetons.Surface), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 0, 10, 0) };
+                rond.Child = new TextBlock { Text = n.ToString(), FontSize = 12, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                DockPanel.SetDock(rond, Dock.Left); d.Children.Add(rond);
+            }
+            var p = new StackPanel();
+            if (texte != null) p.Children.Add(new TextBlock { Text = texte, TextWrapping = TextWrapping.Wrap });
+            if (source != null) p.Children.Add(new TextBlock { Text = source, FontSize = 11.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+            if (boutons.Length > 0) { var w = new WrapPanel { Margin = new Thickness(0, 6, 0, -6) }; foreach (var b in boutons) w.Children.Add(b); p.Children.Add(w); }
+            d.Children.Add(p);
+            return d;
+        }
+
+        // Action au libellé long (PID dans le texte) : il passe à la ligne au lieu d'être coupé
+        static Button ActionLongue(string texte, bool fort, Action clic)
+        {
+            var b = Briques.Action(texte, fort, (s, e) => clic());
+            b.Content = new TextBlock { Text = texte, TextWrapping = TextWrapping.Wrap };
+            return b;
+        }
+
+        static Button Bouton(string texte, bool fort, Action clic)
+        {
+            var b = Briques.Action(texte, fort, (s, e) => clic());
+            b.HorizontalAlignment = HorizontalAlignment.Left;
+            b.Margin = new Thickness(0, 0, 8, 6);
+            return b;
+        }
+
+        // Filtres par type de nœud avec compteurs, puis « Regrouper les répétitions » (bouton dont l'état est écrit)
+        UIElement BarreFiltres(Chaine c)
+        {
+            bool en = L.En;
+            var w = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
+            for (int k = 0; k < VueChainesFluent.Filtres.Length; k++)
+            {
+                if (!VueChainesFluent.FiltrePropose(c, k)) continue;
+                int n = k;
+                bool actif = n == filtre;
+                var b = new Button
+                {
+                    Content = VueChainesFluent.NomFiltre(k) + "  " + VueChainesFluent.Compter(c, k), Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 6), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(actif ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(actif ? Jetons.Accent : Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte), Tag = "f" + k
+                };
+                b.Template = Coquille.ModeleBouton();
+                b.FocusVisualStyle = Jetons.StyleFocus();
+                System.Windows.Automation.AutomationProperties.SetName(b, b.Content + (actif ? (en ? ", selected" : ", choisi") : ""));
+                b.Click += (s, e) => { filtre = n; Afficher(); };
+                w.Children.Add(b);
+            }
+            if (VueChainesFluent.NouveauFormat(c))
+            {
+                var r = new Button
+                {
+                    Content = (en ? "Group repeats: " : "Regrouper les répétitions : ") + (regrouper ? (en ? "On" : "Oui") : (en ? "Off" : "Non")), Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(16, 0, 8, 6), Cursor = Cursors.Hand,
+                    Background = Jetons.Pinceau(regrouper ? Jetons.Surface : Jetons.Fond), BorderBrush = Jetons.Pinceau(regrouper ? Jetons.Accent : Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte), Tag = "regrouper"
+                };
+                r.Template = Coquille.ModeleBouton();
+                r.FocusVisualStyle = Jetons.StyleFocus();
+                System.Windows.Automation.AutomationProperties.SetName(r, r.Content.ToString());
+                r.Click += (s, e) => { regrouper = !regrouper; Afficher(); };
+                w.Children.Add(r);
+            }
+            return w;
+        }
+
+        // Les filtres sont reconstruits au clic : le focus revient au bouton actif (ou au regroupement s'il venait de là)
+        void RendreFocusFiltres()
+        {
+            var w = hoteFiltres.Content as WrapPanel;
+            if (w == null) return;
+            foreach (UIElement e in w.Children)
+            {
+                var b = e as Button;
+                if (b != null && (string.Equals(b.Tag as string, "f" + filtre) || (string.Equals(b.Tag as string, "regrouper") && filtreFocusRegrouper)))
+                { b.Dispatcher.BeginInvoke(new Action(() => b.Focus()), System.Windows.Threading.DispatcherPriority.Input); return; }
+            }
+        }
+        bool filtreFocusRegrouper { get { var f = Keyboard.FocusedElement as Button; return f != null && string.Equals(f.Tag as string, "regrouper"); } }
+
+        UIElement EnteteGraphe(Chaine c)
+        {
+            bool en = L.En;
+            var d = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var z = new StackPanel { Orientation = Orientation.Horizontal };
+            Action<string, string, Action> zb = (texte, nom, agir) =>
+            {
+                var b = new Button { Content = texte, Padding = new Thickness(9, 2, 9, 3), Margin = new Thickness(4, 0, 0, 0), Cursor = Cursors.Hand, Background = Jetons.Pinceau(Jetons.Fond), BorderBrush = Jetons.Pinceau(Jetons.Separateur), BorderThickness = new Thickness(1), Foreground = Jetons.Pinceau(Jetons.Texte) };
+                b.Template = Coquille.ModeleBouton();
+                b.FocusVisualStyle = Jetons.StyleFocus();
+                System.Windows.Automation.AutomationProperties.SetName(b, nom);
+                b.Click += (s, e) => agir();
+                z.Children.Add(b);
+            };
+            zb("−", en ? "Zoom out" : "Dézoomer", () => { zoomAuto = false; Zoomer(Math.Max(0.25, zoom - 0.25)); });
+            zb(Math.Round(zoom * 100) + " %", en ? "Zoom 100 %" : "Zoom 100 %", () => { zoomAuto = false; Zoomer(1); });
+            zb("+", en ? "Zoom in" : "Zoomer", () => { zoomAuto = false; Zoomer(Math.Min(2, zoom + 0.25)); });
+            zb(en ? "Fit" : "Ajuster", en ? "Fit the graph" : "Ajuster le graphe", () => { zoomAuto = false; Ajuster(); });
+            DockPanel.SetDock(z, Dock.Right); d.Children.Add(z);
+            var t = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            t.Inlines.Add(new System.Windows.Documents.Run(en ? "Who launched what" : "Qui a lancé quoi") { FontSize = 15, FontWeight = FontWeights.SemiBold });
+            string sous = en ? "parents left, children right" : "parents à gauche, enfants à droite";
+            int nCases = graphe.Cases.Count(x => !x.Fantome && !x.Repli);
+            if (nCases != graphe.Processus) sous += "  ·  " + string.Format(en ? "{0} processes, {1} boxes" : "{0} processus, {1} cases", graphe.Processus, nCases);
+            if (c.NoeudsTronques > 0) sous += "  ·  " + string.Format(en ? "{0} of {1} processes published" : "{0} processus publiés sur {1}", graphe.Processus, graphe.Processus + c.NoeudsTronques);
+            if (filtre > 0) sous += "  ·  " + string.Format(en ? "{0}: {1} matching, the others dimmed" : "{0} : {1} correspondant(s), les autres estompés", VueChainesFluent.NomFiltre(filtre), VueChainesFluent.Compter(c, filtre));
+            t.Inlines.Add(new System.Windows.Documents.Run("   " + sous) { FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+            d.Children.Add(t);
+            return d;
+        }
+
+        void Zoomer(double z)
+        {
+            zoom = z;
+            echelle.ScaleX = echelle.ScaleY = zoom;
+            var d = hoteEntete.Content as DockPanel;
+            var boutons = d == null ? null : d.Children[0] as StackPanel;
+            if (boutons != null && boutons.Children.Count > 1) ((Button)boutons.Children[1]).Content = Math.Round(zoom * 100) + " %";
+        }
+
+        // Zoom automatique : le graphe tient dans la largeur de la carte, sans descendre sous 60 % (au-delà, défilement)
+        void AjusterLargeur()
+        {
+            if (graphe == null || graphe.Largeur <= 0 || hoteGraphe.ActualWidth <= 40) return;
+            double z = Math.Max(0.6, Math.Min(1, (hoteGraphe.ActualWidth - 12) / graphe.Largeur));
+            if (Math.Abs(z - zoom) > 0.005) Zoomer(z);
+        }
+
+        void Ajuster()
+        {
+            if (graphe == null || graphe.Largeur <= 0) return;
+            double l = hoteGraphe.ActualWidth > 40 ? hoteGraphe.ActualWidth - 30 : 600;
+            Zoomer(Math.Max(0.25, Math.Min(1, Math.Min(l / graphe.Largeur, (defileGraphe.MaxHeight - 20) / graphe.Hauteur))));
+        }
+
+        void DessinerGraphe(Chaine c, CaseChaine choix)
+        {
+            elementsCases.Clear();
+            var toile = new Canvas { Width = Math.Max(graphe.Largeur, 10), Height = Math.Max(graphe.Hauteur, 10), LayoutTransform = echelle, Background = Brushes.Transparent };
+            echelle.ScaleX = echelle.ScaleY = zoom;
+            bool nouveau = VueChainesFluent.NouveauFormat(c);
+            foreach (var cs in graphe.Cases)
+                foreach (var e in cs.Enfants)
+                    if (!e.Masquee) Lien(toile, cs, e, nouveau);
+            foreach (var cs in graphe.Cases) DessinerCase(toile, c, cs, cs == choix);
+            anneau = new System.Windows.Shapes.Rectangle { StrokeThickness = 2, Stroke = Jetons.Pinceau(Jetons.Accent), RadiusX = 9, RadiusY = 9, IsHitTestVisible = false, Visibility = Visibility.Collapsed };
+            toile.Children.Add(anneau);
+            defileGraphe.Content = toile;
+            if (zoomAuto) AjusterLargeur();
+            PlacerAnneau();
+            // Case choisie par l'utilisateur (clic, liste repliée, membre d'un groupe) : amenée à la vue ; jamais à un simple
+            // rafraîchissement, pour ne pas faire défiler la page sous ses yeux
+            FrameworkElement vise;
+            if (amener && choix != null && elementsCases.TryGetValue(VueChainesFluent.CleCase(choix), out vise))
+                vise.Dispatcher.BeginInvoke(new Action(() => vise.BringIntoView()), System.Windows.Threading.DispatcherPriority.Loaded);
+            amener = false;
+        }
+
+        // Trait plein : parent suivi ; pointillé orange : parent suivi à heure approchée (±10 s) ; tirets : parent non suivi
+        // (vers la case fantôme) ; plein discret : racine du système. Service plus ancien : trait plein, nature non publiée
+        static void Lien(Canvas toile, CaseChaine a, CaseChaine b, bool nouveau)
+        {
+            double w = VueChainesFluent.LargeurCase, h = VueChainesFluent.HauteurCase;
+            var p0 = new Point(a.X + w, a.Y + h / 2);
+            var p1 = new Point(b.X - 6, b.Y + h / 2);
+            double mx = (p0.X + p1.X) / 2;
+            var geo = new PathGeometry();
+            var f = new PathFigure { StartPoint = p0 };
+            f.Segments.Add(new BezierSegment(new Point(mx, p0.Y), new Point(mx, p1.Y), p1, true));
+            geo.Figures.Add(f);
+            geo.Freeze();
+            int style = VueChainesFluent.StyleLien(b.Lien, nouveau);
+            var couleur = style == 1 ? Jetons.Attention : style == 3 ? Jetons.Separateur : Jetons.TexteSecondaire;
+            var trait = new System.Windows.Shapes.Path { Data = geo, Stroke = Jetons.Pinceau(couleur), StrokeThickness = style == 1 ? 2.2 : 1.6, StrokeDashCap = PenLineCap.Round, IsHitTestVisible = false };
+            if (style == 1) trait.StrokeDashArray = new DoubleCollection { 0.1, 3 };
+            if (style == 2) trait.StrokeDashArray = new DoubleCollection { 4, 3 };
+            toile.Children.Add(trait);
+            toile.Children.Add(new System.Windows.Shapes.Polygon { Points = new PointCollection { new Point(p1.X, p1.Y - 4.5), new Point(p1.X + 6, p1.Y), new Point(p1.X, p1.Y + 4.5) }, Fill = Jetons.Pinceau(couleur), IsHitTestVisible = false });
+            if (style == 1)
+            {
+                var t = new TextBlock { Text = "±10 s", FontSize = 10.5, Foreground = Jetons.Pinceau(Jetons.Attention), FontStyle = FontStyles.Italic, Background = Jetons.Pinceau(Jetons.Fond), IsHitTestVisible = false };
+                Canvas.SetLeft(t, mx - 14); Canvas.SetTop(t, (p0.Y + p1.Y) / 2 - (Math.Abs(p0.Y - p1.Y) < 2 ? 20 : 8));
+                toile.Children.Add(t);
+            }
+        }
+
+        void DessinerCase(Canvas toile, Chaine c, CaseChaine cs, bool choisie)
+        {
+            double w = VueChainesFluent.LargeurCase, h = VueChainesFluent.HauteurCase;
+            string cle = VueChainesFluent.CleCase(cs);
+            int g = cs.Fantome || cs.Repli ? 0 : cs.Membres.Max(m => VueChainesFluent.GraviteNoeud(c, m));
+            var couleur = Briques.Couleur(g);
+            bool estompee = filtre > 0 && !cs.Fantome && !(cs.Repli ? cs.Replies.Any(m => VueChainesFluent.Garde(m, filtre)) : cs.Membres.Any(m => VueChainesFluent.Garde(m, filtre)));
+            if (cs.Membres.Count > 1)
+                for (int k = 2; k >= 1; k--)
+                {
+                    var ar = new Border { Width = w, Height = h, CornerRadius = new CornerRadius(6), Background = Jetons.Pinceau(Jetons.Surface), BorderBrush = Jetons.Pinceau(Jetons.Separateur), BorderThickness = new Thickness(1), IsHitTestVisible = false, Opacity = estompee ? 0.35 : 1 };
+                    Canvas.SetLeft(ar, cs.X + 4 * k); Canvas.SetTop(ar, cs.Y + 4 * k); toile.Children.Add(ar);
+                }
+            var b = new Border { Width = w, Height = h, CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 5, 8, 5), Cursor = Cursors.Hand, Opacity = estompee ? 0.35 : 1 };
+            if (cs.Fantome || cs.Repli)
+            {
+                b.Background = Jetons.Pinceau(Jetons.Fond);
+                b.BorderThickness = new Thickness(0);
+                var cadre = new System.Windows.Shapes.Rectangle { Width = w, Height = h, RadiusX = 6, RadiusY = 6, Stroke = Jetons.Pinceau(choisie ? Jetons.Accent : Jetons.TexteSecondaire), StrokeThickness = choisie ? 1.6 : 1, StrokeDashArray = new DoubleCollection { 3, 3 }, IsHitTestVisible = false };
+                Canvas.SetLeft(cadre, cs.X); Canvas.SetTop(cadre, cs.Y);
+                toile.Children.Add(b); Canvas.SetLeft(b, cs.X); Canvas.SetTop(b, cs.Y);
+                toile.Children.Add(cadre);
+            }
+            else
+            {
+                b.Background = Jetons.Pinceau(choisie ? Jetons.Surface : Jetons.Carte);
+                b.BorderBrush = Jetons.Pinceau(choisie ? Jetons.Accent : Jetons.Separateur);
+                b.BorderThickness = new Thickness(choisie ? 1.6 : 1);
+                toile.Children.Add(b); Canvas.SetLeft(b, cs.X); Canvas.SetTop(b, cs.Y);
+                var barre = new Border { Width = 3, Height = h - 14, CornerRadius = new CornerRadius(2), Background = Jetons.Pinceau(couleur), IsHitTestVisible = false, Opacity = estompee ? 0.35 : 1 };
+                Canvas.SetLeft(barre, cs.X + 1); Canvas.SetTop(barre, cs.Y + 7);
+                toile.Children.Add(barre);
+            }
+            var p = new StackPanel();
+            var haut = new DockPanel();
+            if (cs.Score > 0 && !cs.Fantome && !cs.Repli) { var sc = new TextBlock { Text = "+" + cs.Score, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(couleur), Margin = new Thickness(4, 0, 0, 0) }; DockPanel.SetDock(sc, Dock.Right); haut.Children.Add(sc); }
+            string titre = cs.Fantome || cs.Repli ? cs.Titre : Canal.Visible(cs.Premier.Nom);
+            haut.Children.Add(new TextBlock { Text = titre, FontSize = 12.5, FontWeight = cs.Fantome ? FontWeights.Normal : FontWeights.SemiBold, FontStyle = cs.Fantome ? FontStyles.Italic : FontStyles.Normal, Foreground = Jetons.Pinceau(cs.Fantome ? Jetons.TexteSecondaire : Jetons.Texte), TextTrimming = TextTrimming.CharacterEllipsis });
+            p.Children.Add(haut);
+            var bas = new DockPanel { Margin = new Thickness(0, 3, 0, 0) };
+            string sous;
+            if (cs.Fantome || cs.Repli) sous = cs.Sous;
+            else if (cs.Membres.Count > 1)
+            {
+                var badge = new Border { Background = Jetons.Pinceau(Color.FromArgb(0x30, Jetons.Accent.R, Jetons.Accent.G, Jetons.Accent.B)), CornerRadius = new CornerRadius(8), Padding = new Thickness(5, 0, 5, 1), Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
+                badge.Child = new TextBlock { Text = "×" + cs.Membres.Count, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.Accent) };
+                DockPanel.SetDock(badge, Dock.Left); bas.Children.Add(badge);
+                sous = string.Format(L.En ? "{0} running" : "{0} en cours", cs.Membres.Count(VueChainesFluent.EnCours));
+            }
+            else
+            {
+                var n = cs.Premier;
+                bool publie = VueChainesFluent.Publie(n);
+                if (publie)
+                {
+                    var pt = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Margin = new Thickness(0, 1, 6, 0), VerticalAlignment = VerticalAlignment.Center, Stroke = Jetons.Pinceau(n.Vivant == true ? Jetons.Succes : Jetons.TexteSecondaire), StrokeThickness = 1.3, Fill = n.Vivant == true ? Jetons.Pinceau(Jetons.Succes) : Brushes.Transparent };
+                    DockPanel.SetDock(pt, Dock.Left); bas.Children.Add(pt);
+                }
+                sous = n.Pid + (publie ? "  ·  " + (n.Vivant == true ? (L.En ? "running" : "en cours") : (L.En ? "exited" : "terminé")) : "");
+            }
+            bas.Children.Add(new TextBlock { Text = sous, FontSize = 11.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+            p.Children.Add(bas);
+            b.Child = p;
+            b.ToolTip = VueChainesFluent.NomCase(cs);
+            b.MouseLeftButtonUp += (s, e) => { courant = cle; Choisir(cs); };
+            elementsCases[cle] = b;
+        }
+
+        void Choisir(CaseChaine cs)
+        {
+            amener = true;
+            choixCase = VueChainesFluent.CleCase(cs);
+            courant = choixCase;
+            tousMembres = false;
+            Afficher();
+        }
+
+        // Anneau de focus clavier autour de la case courante, seulement quand le graphe a le focus ; nom lu par le Narrateur
+        void PlacerAnneau()
+        {
+            if (anneau == null || graphe == null) return;
+            var cs = CaseDe(courant);
+            System.Windows.Automation.AutomationProperties.SetName(hoteGraphe, (L.En ? "Process graph" : "Graphe des processus") + (cs == null ? "" : ": " + VueChainesFluent.NomCase(cs)));
+            if (cs == null || !hoteGraphe.IsKeyboardFocused) { anneau.Visibility = Visibility.Collapsed; return; }
+            anneau.Width = VueChainesFluent.LargeurCase + 8; anneau.Height = VueChainesFluent.HauteurCase + 8;
+            Canvas.SetLeft(anneau, cs.X - 4); Canvas.SetTop(anneau, cs.Y - 4);
+            anneau.Visibility = Visibility.Visible;
+            FrameworkElement el;
+            if (elementsCases.TryGetValue(VueChainesFluent.CleCase(cs), out el)) el.BringIntoView();
+        }
+
+        // Clavier : flèches parent / enfant / case voisine de la couche, Début : première case, Entrée ou Espace : ouvrir le détail
+        void ToucheGraphe(object s, KeyEventArgs e)
+        {
+            if (graphe == null) return;
+            string t = e.Key == Key.Left ? "Gauche" : e.Key == Key.Right ? "Droite" : e.Key == Key.Up ? "Haut" : e.Key == Key.Down ? "Bas" : e.Key == Key.Home ? "Debut" : null;
+            var cs = CaseDe(courant);
+            if (t != null)
+            {
+                var v = VueChainesFluent.Voisin(graphe, cs, t);
+                if (v != null) courant = VueChainesFluent.CleCase(v);
+                PlacerAnneau();
+                e.Handled = true;
+            }
+            else if ((e.Key == Key.Enter || e.Key == Key.Space) && cs != null) { Choisir(cs); e.Handled = true; }
+        }
+
+        UIElement BasGraphe(Chaine c)
+        {
+            bool en = L.En;
+            bool nouveau = VueChainesFluent.NouveauFormat(c);
+            var p = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+            var w = new WrapPanel();
+            Action<int, string> trait = (style, texte) =>
+            {
+                var sp = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 16, 6) };
+                var l = new System.Windows.Shapes.Line { X1 = 0, Y1 = 6, X2 = 28, Y2 = 6, Stroke = Jetons.Pinceau(style == 1 ? Jetons.Attention : Jetons.TexteSecondaire), StrokeThickness = style == 1 ? 2.2 : 1.6, StrokeDashCap = PenLineCap.Round, Width = 30, Height = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+                if (style == 1) l.StrokeDashArray = new DoubleCollection { 0.1, 3 };
+                if (style == 2) l.StrokeDashArray = new DoubleCollection { 4, 3 };
+                sp.Children.Add(l);
+                sp.Children.Add(new TextBlock { Text = texte, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+                w.Children.Add(sp);
+            };
+            if (nouveau)
+            {
+                trait(0, en ? "parent followed (alive when the child started)" : "parent suivi (vivant au lancement de l'enfant)");
+                trait(1, en ? "parent time approximated (±10 s)" : "heure du parent approchée (±10 s)");
+                trait(2, en ? "parent not followed" : "parent non suivi");
+                Action<bool, string> point = (vivant, texte) =>
+                {
+                    var sp = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 16, 6) };
+                    sp.Children.Add(new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Stroke = Jetons.Pinceau(vivant ? Jetons.Succes : Jetons.TexteSecondaire), StrokeThickness = 1.3, Fill = vivant ? Jetons.Pinceau(Jetons.Succes) : Brushes.Transparent, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) });
+                    sp.Children.Add(new TextBlock { Text = texte, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire) });
+                    w.Children.Add(sp);
+                };
+                point(true, en ? "running" : "en cours");
+                point(false, en ? "exited" : "terminé");
+                w.Children.Add(new TextBlock { Text = (en ? "×N: repeats grouped" : "×N : répétitions regroupées"), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 0, 16, 6) });
+            }
+            else trait(0, en ? "launched by (nature of the link not published)" : "lancé par (nature du lien non publiée)");
+            p.Children.Add(w);
+            p.Children.Add(new Border { Height = 1, Background = Jetons.Pinceau(Jetons.Separateur), Margin = new Thickness(0, 4, 0, 8) });
+            p.Children.Add(Note(VueChainesFluent.Limites(nouveau), 0));
+            p.Children.Add(Note(en ? "Keyboard: Tab enters the graph, arrow keys move parent / child / sibling, Enter opens the detail. A layer of more than 40 boxes is folded into “+N more” (opens the list); the text view always lists everything."
+                                   : "Clavier : Tab entre dans le graphe, les flèches vont au parent, à l'enfant, à la case voisine, Entrée ouvre le détail. Au-delà de 40 cases, une couche est repliée en « +N de plus » (ouvre la liste) ; la vue texte liste toujours tout.", 4));
+            return p;
+        }
+
+        UIElement DetailCase(Chaine c, CaseChaine cs, Alerte lien)
+        {
+            bool en = L.En;
+            var pile = new StackPanel();
+            if (cs == null) { pile.Children.Add(Note(en ? "Select a box of the graph to read its detail and act on it." : "Sélectionnez une case du graphe pour lire son détail et agir.", 0)); return pile; }
+            if (cs.Repli)
+            {
+                pile.Children.Add(new TextBlock { Text = cs.Titre, FontSize = 18, FontWeight = FontWeights.SemiBold });
+                pile.Children.Add(Note(string.Format(en ? "{0} processes of this layer are folded (more than 40 boxes). Choose one to show it in the graph." : "{0} processus de cette couche sont repliés (plus de 40 cases). Choisissez-en un pour le montrer dans le graphe.", cs.Replies.Count), 4));
+                var l = new StackPanel();
+                KeyboardNavigation.SetTabNavigation(l, KeyboardNavigationMode.Once);
+                KeyboardNavigation.SetDirectionalNavigation(l, KeyboardNavigationMode.Contained);
+                foreach (var n in cs.Replies.Take(500))
+                {
+                    int pid = n.Pid;
+                    l.Children.Add(Briques.Ligne(Canal.Visible(n.Nom), n.Score > 0 ? "+" + n.Score : "", VueChainesFluent.EtatProcessus(n), VueChainesFluent.GraviteNoeud(c, n), false, false, () => { choixCase = "p" + pid; courant = choixCase; amener = true; Afficher(); }));
+                }
+                pile.Children.Add(l);
+                return pile;
+            }
+            if (cs.Fantome)
+            {
+                var tete = cs.Enfants.Count > 0 ? cs.Enfants[0].Premier : null;
+                pile.Children.Add(new TextBlock { Text = cs.Titre, FontSize = 18, FontWeight = FontWeights.SemiBold, FontStyle = FontStyles.Italic, TextWrapping = TextWrapping.Wrap });
+                pile.Children.Add(new TextBlock { Text = en ? "Parent of the head, not in the chain" : "Parent de la tête, hors de la chaîne", Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 2, 0, 0) });
+                if (tete != null)
+                {
+                    Ligne(pile, en ? "Why it is not followed" : "Pourquoi il n'est pas suivi", VueChainesFluent.TexteLien(VueChainesFluent.EstTete(tete) ? tete.Lien : null), false);
+                    if (tete.ParentPid > 0) Ligne(pile, en ? "Parent PID (as Windows gave it)" : "PID du parent (donné par Windows)", tete.ParentPid.ToString(), false);
+                    Ligne(pile, en ? "Head of the chain" : "Tête de la chaîne", Canal.Visible(tete.Nom) + "  ·  PID " + tete.Pid, false);
+                }
+                pile.Children.Add(Note(en ? "No action: this process is not part of the chain, deR4Tizer does not know it is the same program." : "Aucune action : ce processus ne fait pas partie de la chaîne, deR4Tizer ne sait pas si c'est le même programme.", 12));
+                return pile;
+            }
+            var membres = cs.Membres;
+            int pidVu;
+            NoeudChaine n0 = membres.Count == 1 ? membres[0] : (choixCase != null && choixCase.StartsWith("p", StringComparison.Ordinal) && int.TryParse(choixCase.Substring(1), out pidVu) ? membres.FirstOrDefault(m => m.Pid == pidVu) : null);
+            if (n0 == null) return DetailGroupe(c, cs);
+            if (membres.Count > 1)
+                pile.Children.Add(Bouton(string.Format(en ? "Back to the group of {0}" : "Revenir au groupe de {0}", membres.Count), false, () => { choixCase = "g" + membres[0].Pid; Afficher(); }));
+            DetailNoeud(pile, c, n0);
+            return pile;
+        }
+
+        void DetailNoeud(StackPanel pile, Chaine c, NoeudChaine n)
+        {
+            bool en = L.En;
+            int g = VueChainesFluent.GraviteNoeud(c, n);
+            pile.Children.Add(new TextBlock { Text = Canal.Visible(n.Nom), FontSize = 18, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            if (n.Score > 0) pile.Children.Add(new TextBlock { Text = "+" + n.Score + (c.Score >= VueChainesFluent.SeuilChaine ? "  ·  " + (en ? "counts in an alert chain" : "compte dans une chaîne en alerte") : ""), FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(g)), Margin = new Thickness(0, 2, 0, 0) });
+            Ligne(pile, en ? "Process" : "Processus", VueChainesFluent.EtatProcessus(n), false, VueChainesFluent.Naissance(n));
+            string lance = VueChainesFluent.LancePar(c, n);
+            if (lance != null) Ligne(pile, en ? "Launched by" : "Lancé par", lance, false, VueChainesFluent.TexteLien(n.Lien));
+            if (!string.IsNullOrEmpty(n.Chemin)) Ligne(pile, en ? "Path" : "Chemin", Canal.Visible(n.Chemin), true);
+            if (!string.IsNullOrEmpty(n.LigneCommande)) Ligne(pile, en ? "Command line (first 300 characters, secrets masked)" : "Ligne de commande (300 premiers caractères, secrets masqués)", Canal.Visible(n.LigneCommande), true);
+            var signaux = VueChainesFluent.Signaux(n);
+            if (VueChainesFluent.Publie(n))
+            {
+                if (signaux.Count > 0 || n.SignauxTronques > 0) pile.Children.Add(Briques.Titre(en ? "Signals" : "Signaux", 12));
+                foreach (var s in signaux) pile.Children.Add(CarteSignal(s, Briques.Couleur(g > 0 ? g : 1)));
+                if (n.SignauxTronques > 0) pile.Children.Add(Note(string.Format(en ? "{0} more signal(s) not published (they still count in the score)." : "{0} signal(s) de plus non publié(s) (ils comptent toujours dans le score).", n.SignauxTronques), 0));
+            }
+            else if (!string.IsNullOrEmpty(n.Raisons)) Ligne(pile, en ? "Reasons" : "Raisons", Canal.Visible(n.Raisons), false);
+            NotesActions(pile, n);
+            Actions(pile, VueChainesFluent.Actions(n), a => Agir(n, a));
+        }
+
+        static UIElement CarteSignal(SignalChaine s, Color couleur)
+        {
+            bool en = L.En;
+            var b = new Border { Background = Jetons.Pinceau(Jetons.Fond), CornerRadius = new CornerRadius(5), Padding = new Thickness(10, 7, 10, 8), Margin = new Thickness(0, 0, 0, 6) };
+            var p = new StackPanel();
+            var h = new DockPanel();
+            var hr = new TextBlock { Text = VueChainesFluent.HeureCourte(s.Heure), FontFamily = Briques.Chasse, FontSize = 11.5, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), ToolTip = en ? "time the signal was attached to the chain" : "heure de rattachement du signal à la chaîne" };
+            DockPanel.SetDock(hr, Dock.Right); h.Children.Add(hr);
+            var t = new TextBlock { FontSize = 12.5 };
+            t.Inlines.Add(new System.Windows.Documents.Run("+" + s.Score + "  ") { Foreground = Jetons.Pinceau(couleur), FontWeight = FontWeights.SemiBold });
+            t.Inlines.Add(new System.Windows.Documents.Run(Canal.Visible(s.Code)) { Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), FontFamily = Briques.Chasse });
+            h.Children.Add(t);
+            p.Children.Add(h);
+            string lib = VueChainesFluent.LibelleSignal(s);
+            p.Children.Add(new TextBlock { Text = lib, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0) });
+            string raison = Canal.Visible(s.Raison);
+            if (raison.Length > 0 && raison != lib) p.Children.Add(new TextBlock { Text = (en ? "Service text: " : "Texte du service : ") + raison, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+            if (s.Techniques != null && s.Techniques.Count > 0) p.Children.Add(new TextBlock { Text = string.Join("  ·  ", s.Techniques.Select(Canal.Visible)), FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), Margin = new Thickness(0, 2, 0, 0) });
+            b.Child = p;
+            return b;
+        }
+
+        UIElement DetailGroupe(Chaine c, CaseChaine cs)
+        {
+            bool en = L.En;
+            var pile = new StackPanel();
+            var n = cs.Premier;
+            var membres = cs.Membres;
+            var hd = new StackPanel { Orientation = Orientation.Horizontal };
+            hd.Children.Add(new TextBlock { Text = Canal.Visible(n.Nom), FontSize = 18, FontWeight = FontWeights.SemiBold });
+            var badge = new Border { Background = Jetons.Pinceau(Color.FromArgb(0x30, Jetons.Accent.R, Jetons.Accent.G, Jetons.Accent.B)), CornerRadius = new CornerRadius(9), Padding = new Thickness(8, 1, 8, 2), Margin = new Thickness(10, 2, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            badge.Child = new TextBlock { Text = "×" + membres.Count, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Jetons.Accent) };
+            hd.Children.Add(badge);
+            pile.Children.Add(hd);
+            pile.Children.Add(Note(string.Format(en ? "{0} processes: same parent, same program, same command line (identical, first 300 characters), same signal codes." : "{0} processus : même parent, même programme, même ligne de commande (identique sur les 300 premiers caractères), mêmes codes de signaux.", membres.Count), 4));
+            int min = membres.Min(m => m.Score), max = membres.Max(m => m.Score);
+            if (max > 0) pile.Children.Add(new TextBlock { Text = (min == max ? string.Format(en ? "+{0} each" : "+{0} chacun", max) : string.Format(en ? "+{0} to +{1}" : "+{0} à +{1}", min, max)) + (en ? " (process scores; the chain score is computed by the service)" : " (scores des processus ; le score de la chaîne est calculé par le service)"), TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.SemiBold, Foreground = Jetons.Pinceau(Briques.Couleur(membres.Max(m => VueChainesFluent.GraviteNoeud(c, m)))), Margin = new Thickness(0, 4, 0, 0) });
+            string lance = VueChainesFluent.LancePar(c, n);
+            var heures = membres.Select(m => m.Creation ?? "").Where(x => x.Length > 0).OrderBy(x => x, StringComparer.Ordinal).ToList();
+            if (lance != null) Ligne(pile, en ? "Launched by" : "Lancé par", lance, false, heures.Count > 1 ? string.Format(en ? "started from {0} to {1}" : "lancés de {0} à {1}", VueChainesFluent.HeureCourte(heures[0]), VueChainesFluent.HeureCourte(heures[heures.Count - 1])) : VueChainesFluent.TexteLien(n.Lien));
+            if (!string.IsNullOrEmpty(n.Chemin)) Ligne(pile, en ? "Path" : "Chemin", Canal.Visible(n.Chemin), true);
+            if (!string.IsNullOrEmpty(n.LigneCommande)) Ligne(pile, en ? "Command line (identical, first 300 characters)" : "Ligne de commande (identique sur les 300 premiers caractères)", Canal.Visible(n.LigneCommande), true);
+            pile.Children.Add(Briques.Titre(en ? "Processes in this group" : "Processus de ce groupe", 12));
+            var tab = new StackPanel();
+            KeyboardNavigation.SetTabNavigation(tab, KeyboardNavigationMode.Once);
+            KeyboardNavigation.SetDirectionalNavigation(tab, KeyboardNavigationMode.Contained);
+            // Plus récents d'abord ; les 5 premiers, puis « Montrer les N autres »
+            var ordre = membres.Select((m, i) => new { m, i }).OrderByDescending(x => x.m.Creation ?? "", StringComparer.Ordinal).ThenByDescending(x => x.i).Select(x => x.m).ToList();
+            foreach (var m in tousMembres ? ordre : ordre.Take(5))
+            {
+                int pid = m.Pid;
+                string etat = m.Vivant == true ? (en ? "running" : "en cours") : (en ? "exited" : "terminé");
+                if (m.Signaux != null && m.Signaux.Count > 0 && m.Score > 0) etat += "  ·  +" + m.Score;
+                tab.Children.Add(Briques.Ligne("PID " + pid, VueChainesFluent.HeureCourte(m.Creation), etat, 0, false, m.Vivant != true, () => { choixCase = "p" + pid; Afficher(); }));
+            }
+            pile.Children.Add(tab);
+            if (!tousMembres && ordre.Count > 5) pile.Children.Add(Bouton(string.Format(en ? "Show the {0} others" : "Montrer les {0} autres", ordre.Count - 5), false, () => { tousMembres = true; Afficher(); }));
+            // Agir : sur le plus récent encore en cours (même commande et même question que pour un processus seul)
+            pile.Children.Add(Briques.Titre(L.T("Agir"), 12));
+            var vivant = ordre.FirstOrDefault(m => VueChainesFluent.EnCours(m) && m.Pid > 4);
+            if (vivant == null) pile.Children.Add(Note(en ? "No process of this group is still running: kill and suspend are not offered." : "Aucun processus de ce groupe ne tourne encore : tuer et suspendre ne sont pas proposés.", 0));
+            else if (source != null)
+            {
+                pile.Children.Add(ActionLongue(string.Format(en ? "Kill the running one (PID {0}) and all its descendants" : "Tuer celui qui tourne (PID {0}) et toute sa descendance", vivant.Pid), true, () => Agir(vivant, "tuerChaine")));
+                pile.Children.Add(ActionLongue(string.Format(en ? "Suspend the process (PID {0})" : "Suspendre le processus (PID {0})", vivant.Pid), false, () => Agir(vivant, "suspendre")));
+            }
+            pile.Children.Add(Briques.Action(string.Format(en ? "Ungroup these {0} processes" : "Dégrouper ces {0} processus", membres.Count), false, (s, e) => { regrouper = false; choixCase = "p" + n.Pid; Afficher(); }));
+            pile.Children.Add(Briques.Action(L.T("Copier"), false, (s, e) => VueReseauFluent.Copier(string.Join("\r\n", membres.Select(VueChainesFluent.Copie)))));
+            return pile;
+        }
+
+        static void Ligne(StackPanel pile, string titre, string valeur, bool chasse, string precision = null)
+        {
+            pile.Children.Add(Briques.Titre(titre, 10));
+            var t = new TextBlock { Text = valeur, TextWrapping = TextWrapping.Wrap };
+            if (chasse) { t.FontFamily = Briques.Chasse; t.FontSize = 12; }
+            pile.Children.Add(t);
+            if (!string.IsNullOrEmpty(precision)) pile.Children.Add(new TextBlock { Text = precision, FontSize = 12, Foreground = Jetons.Pinceau(Jetons.TexteSecondaire), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
         }
     }
     // Décisions pures de la page Trafic de la coquille (U4b), testées par tests\rendu-pilote.ps1. Noms de programmes, noms

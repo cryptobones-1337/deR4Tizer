@@ -440,6 +440,13 @@ Limits (from the mock-up file):
   collection.
 - The command line compared by the interface to group repeats is the published one (300 characters, secrets masked).
 
+Read by the interface since step 2 (Chains page as an analysis dossier, `VueChainesFluent` and `PageChainesFluent` in
+`src/Fluent.cs`): graph from `ParentPid` and `Lien`, states from `Vivant` and `Fin`, summary from `Signaux`, linked alert
+by `Entite` (compared case-insensitively with the `Entite` of the CHA-001 alerts of `alertes.json`), stable selection by
+`Identite`, `ChainesTronquees`, `NoeudsTronques` and `SignauxTronques` said on the page. A file without these fields
+(older service) gives a readable page that states what the service does not publish: no state, no signal times, no
+linked alert, links drawn from the indentation without saying their nature.
+
 ## Stability rules
 
 - A field never changes type.

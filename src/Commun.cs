@@ -43,6 +43,8 @@ namespace DeR4Tizer
         public List<Ecoute> Ecoutes { get; set; }
         public EtatDefender Defender { get; set; }
         public List<Chaine> Chaines { get; set; }
+        // Chaînes, processus ou signaux laissés hors d'etat.json par le budget de taille du service (T-20, #323)
+        public bool ChainesTronquees { get; set; }
         public bool Panique { get; set; }
         // « active », « inactive » ou « incertaine » : compté sur les règles du pare-feu par le service (PR 6.5)
         public string PaniqueEtat { get; set; }
@@ -401,6 +403,10 @@ namespace DeR4Tizer
         public string Resume { get; set; }
         public string Depuis { get; set; }
         public List<NoeudChaine> Noeuds { get; set; }
+        // T-20, étape 1 (#323) : absents d'un service plus ancien (null, 0)
+        public string Identite { get; set; }
+        public string Entite { get; set; }
+        public int NoeudsTronques { get; set; }
     }
 
     public class NoeudChaine
@@ -412,6 +418,27 @@ namespace DeR4Tizer
         public string LigneCommande { get; set; }
         public int Score { get; set; }
         public string Raisons { get; set; }
+        // T-20, étape 1 (#323) : absents d'un service plus ancien (Lien null : rien n'est affirmé sur le parent, l'état ou
+        // les signaux ; Vivant et CreationExacte null : inconnus, jamais « terminé »)
+        public long ParentPid { get; set; }
+        public string Creation { get; set; }
+        public bool? CreationExacte { get; set; }
+        public bool? Vivant { get; set; }
+        public string Fin { get; set; }
+        public string Lien { get; set; }
+        public string ParentNom { get; set; }
+        public List<SignalChaine> Signaux { get; set; }
+        public int SignauxTronques { get; set; }
+    }
+
+    // Signal rattaché à un processus d'une chaîne (T-20) : code « RÈGLE#comportement », heure de rattachement, techniques
+    public class SignalChaine
+    {
+        public string Code { get; set; }
+        public int Score { get; set; }
+        public string Heure { get; set; }
+        public List<string> Techniques { get; set; }
+        public string Raison { get; set; }
     }
 
     // Baseline de sécurité (baseline.json)
@@ -824,6 +851,8 @@ namespace DeR4Tizer
         public int Modele { get; set; }
         public string Regle { get; set; }
         public string Collecte { get; set; }
+        // Entité du suivi des incidents posée par le producteur (chaîne : même texte que Chaines[].Entite, T-20)
+        public string Entite { get; set; }
     }
 
     public class Blocage
