@@ -361,6 +361,69 @@ Internet registries), not a location. An address removed from the table (pruning
 of 6,000) leaves the detail and the recent throughput. No account name or program path is published: only the
 program name, as in the existing lists.
 
+## Process chains published in `etat.json` (T-20, step 1: service)
+
+Read-only additions to `Chaines` (mock-up and field list approved by the maintainer on 2026-11-28: « Je valide » (I
+approve) and « Oui, tous » (Yes, all of them)). Every field comes from what the process tree of `chaines.rs` already
+holds (`Arbre.processus`, filled from the process list and the 4688 events, and `Arbre.signaux`): no new collection,
+nothing more read from Windows, no command, no setting. Detection is unchanged: score, CHA-001 alerts and the rule
+that follows a parent are the same (the stop decision of the walk up the tree is only split into reasons,
+`chaines::arret_remontee` and `chaines::lien_parent`, checked against the old rule on every combination). Fields are
+absent from files written before and are then read back empty, `0`, `false` or an empty list (`serde(default)`).
+
+Per process (`Chaines[].Noeuds[]`):
+
+| Field | Type | Values and bounds | From |
+|---|---|---|---|
+| `ParentPid` | integer (u32) | PID of the parent as Windows gave it (process list or 4688), followed or not; 0: unknown | `Processus.parent` |
+| `Creation` | text | local time "YYYY-MM-DD HH:MM:SS.mmm" (23 characters), like `Depuis` with milliseconds; empty if the time cannot be converted | `Processus.naissance`: `TimeCreated` of the 4688, otherwise the time of the first process list that showed it |
+| `CreationExacte` | boolean | true if `Creation` comes from the 4688 | `Processus.exacte` |
+| `Vivant` | boolean | present in the last process list (read every 3 s) | `Processus.vivant` |
+| `Fin` | text | same format as `Creation`; empty if the process was not seen ended. Upper bound only: the time of the first process list where it was missing, not the time it ended | `Processus.fin` |
+| `Lien` | text, closed code (16 characters at most) | see below | decision already taken by the walk up the tree |
+| `ParentNom` | text (64 characters at most) | head of the chain only (empty elsewhere): name of the parent when the entry of the tree for that PID is the process that was alive when the head was created (`racine-systeme`, `parent-service`, `profondeur-max`); empty for `parent-inconnu`, `pid-reutilise` and `parent-termine`, where the name in the tree would be that of another program (`chaines::nom_parent_publie`) | `Processus.nom` of the parent PID |
+| `Signaux` | list of `{ Code, Score, Heure, Techniques, Raison }` | the first 20 signals of the process, in the order they were attached; `Code` "RULE#behaviour" (empty for a signal set without a code), 100 characters at most; `Score` integer; `Heure` local time "YYYY-MM-DD HH:MM:SS" of the attachment of the signal to the tree (monitor cycle of 3 s), not the exact time of the original event; `Techniques` ATT&CK identifiers, 8 at most, 9 characters each at most; `Raison` same text as in `Raisons`, secrets masked in the published copy (`commun::masquer_secrets`, like `Raisons`), 90 characters at most | `Arbre.signaux` (`Signal`) |
+| `SignauxTronques` | integer | signals of the process beyond the 20 published (they still count in `Score` and appear in `Raisons`) | |
+
+`Lien` codes (`chaines::Lien`):
+
+| Code | Meaning |
+|---|---|
+| `suivi` | parent followed, times ordered (exact time or order of the 4688 events) |
+| `suivi-approche` | parent followed with the 10 s margin: the parent was first seen by the process list, its 4688 is missing, so its creation time is approximate (`MARGE_PARENT_APPROCHE`) |
+| `racine-systeme` | head: the parent is a root of the chains by exact path (`RACINES_CHEMINS`, for example explorer.exe in the Windows folder), or PID 0 to 4 |
+| `parent-inconnu` | head: the parent PID is absent from the tree (older than one hour, before the service started, or never seen) |
+| `pid-reutilise` | head: the process that holds this PID was created after the child (also a loop in the parent PIDs, which can only come from a reused PID) |
+| `parent-termine` | head: the entry of this PID was seen ended before the child was created |
+| `parent-service` | head: the parent is the deR4Tizer service (the head already carries the signal `CHA-001#parent-service`, T1134.004) |
+| `profondeur-max` | head: walk up stopped at 32 processes (`PROFONDEUR_MAX`) |
+
+Per chain (`Chaines[]`):
+
+| Field | Type | Values and bounds | From |
+|---|---|---|---|
+| `Identite` | text (300 characters at most, empty beyond) | "name#pid@creation time in hexadecimal FILETIME" of the head: stable while the chain grows or its oldest signal expires | `Arbre::identite`, already used for the CHA-001 ceiling and the entity |
+| `Entite` | text (300 characters at most, empty beyond: never truncated, a truncated key would designate another chain) | same text as the `Entite` of the CHA-001 alert of this chain (`chaines::entite_chaine`, shared with `Arbre::alertes`): `programme:<path of the head>`, or `chaine:<Identite>` when the path is missing or designates an interpreter or a generic launcher; the incident page compares entities case-insensitively. Personal data: the path can contain the name of the account folder (`C:\Users\<name>\…`); the same text is already published in the CHA-001 alerts | `Arbre::alertes` (T-3) |
+| `NoeudsTronques` | integer | processes of the chain beyond the 300 published (`NOEUDS_PUBLIES`) | |
+
+Bounds of the whole: 30 chains at most (existing), 300 processes per published chain (new: before, a chain could
+publish hundreds of processes during one hour), 20 signals per process. The published order puts a parent before its
+children, so the 300 published processes never include a process without its parent
+(`chaines::chaine_publiee`). The chain kept in memory for detection keeps all its processes. Added weight: about
+160 bytes per process (fields above without signals) and about 200 bytes per signal.
+
+Limits (from the mock-up file):
+- The nodes of a chain are only the ancestors of the processes that carry a signal: their siblings without a signal
+  are never in it.
+- `Heure` of a signal is the time it was attached to the tree, not the time of the original event.
+- `Fin` is an upper bound, to within one process list (3 s).
+- `parent-termine` and `pid-reutilise` are told apart only by `Lien`; with an older service, `Lien` is empty and the
+  interface cannot draw an uncertain link.
+- Account, publisher, signature, integrity level and elevation of a process are not known to the tree (the process
+  list gives a name and a parent PID; the 4688 reading does not keep the account): not published, it would be a new
+  collection.
+- The command line compared by the interface to group repeats is the published one (300 characters, secrets masked).
+
 ## Stability rules
 
 - A field never changes type.

@@ -84,6 +84,21 @@ const FT_SECONDE: u64 = 10_000_000;
 /// l'heure de première vue suit sa vraie création d'au plus quelques cycles de 3 s
 const MARGE_PARENT_APPROCHE: u64 = 10 * FT_SECONDE;
 
+/// Signal d'un nœud publié dans etat.json (T-20, lecture seule) : ce que l'arbre a déjà rattaché au processus, borné
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct SignalChaine {
+    /// « RÈGLE#comportement » (vide pour un signal posé sans code), 100 caractères au plus
+    pub code: String,
+    pub score: i32,
+    /// Heure locale du rattachement du signal à l'arbre (cycle de 3 s), pas celle de l'événement d'origine
+    pub heure: String,
+    /// Identifiants ATT&CK, 8 au plus, 9 caractères chacun au plus
+    pub techniques: Vec<String>,
+    /// Même texte que dans `Raisons` (secrets masqués dans la copie publiée), 90 caractères au plus
+    pub raison: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct NoeudChaine {
@@ -94,6 +109,29 @@ pub struct NoeudChaine {
     pub ligne_commande: String,
     pub score: i32,
     pub raisons: String,
+    // T-20 (lecture seule, aucune collecte nouvelle) : ce que l'arbre sait déjà du processus
+    /// PID du parent tel que Windows l'a donné (liste ou 4688), suivi ou non ; 0 : inconnu
+    pub parent_pid: u32,
+    /// Heure locale de création « AAAA-MM-JJ HH:MM:SS.mmm » (copie publiée seulement ; vide en mémoire)
+    pub creation: String,
+    /// Heure de création lue dans le 4688 (sinon : première liste qui l'a montré)
+    pub creation_exacte: bool,
+    /// Présent dans la dernière liste des processus
+    pub vivant: bool,
+    /// Borne haute de la fin (première liste où il manquait), même format ; vide s'il n'a pas été vu terminé
+    pub fin: String,
+    /// Nature du lien au parent (code fermé, `Lien::code`)
+    pub lien: String,
+    /// Tête seulement : nom du parent quand l'entrée de la table est bien le processus qui vivait à la création
+    pub parent_nom: String,
+    /// 20 premiers signaux du processus, le reste compté dans `signaux_tronques`
+    pub signaux: Vec<SignalChaine>,
+    pub signaux_tronques: u32,
+    /// Heures brutes (FILETIME), mises en forme seulement pour la copie publiée ; jamais écrites
+    #[serde(skip)]
+    pub(crate) naissance_ft: u64,
+    #[serde(skip)]
+    pub(crate) fin_ft: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -104,7 +142,160 @@ pub struct Chaine {
     pub resume: String,
     pub depuis: String,
     pub noeuds: Vec<NoeudChaine>,
+    // T-20 (lecture seule)
+    /// Identité stable de la chaîne (`Arbre::identite` : tête, PID, heure de création) ; vide au-delà de 300 caractères
+    pub identite: String,
+    /// Entité d'incident, même calcul que l'alerte CHA-001 (`entite_chaine`) ; vide au-delà de 300 caractères
+    pub entite: String,
+    /// Processus non publiés au-delà de `NOEUDS_PUBLIES` (copie publiée)
+    pub noeuds_tronques: u32,
 }
+
+/// Nature du lien d'un nœud à son parent (T-20) : découpe des décisions déjà prises par `parent_vivait` et par la
+/// remontée d'`ascendance`, sans rien changer à la règle. Code publié fermé, ASCII
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Lien {
+    /// Parent suivi, heures ordonnées (heure exacte ou ordre des 4688)
+    Suivi,
+    /// Parent suivi avec la marge de 10 s (heure du parent approchée)
+    SuiviApproche,
+    /// Tête : le parent est une racine (chemin exact de RACINES_CHEMINS, ou PID 0 à 4)
+    RacineSysteme,
+    /// Tête : PID parent absent de la table
+    ParentInconnu,
+    /// Tête : le processus qui porte ce PID est né après l'enfant (ou boucle de PID, qui suppose un PID repris)
+    PidReutilise,
+    /// Tête : l'entrée de ce PID a été vue terminée avant la création de l'enfant
+    ParentTermine,
+    /// Tête : le parent est le service de deR4Tizer
+    ParentService,
+    /// Tête : remontée arrêtée à PROFONDEUR_MAX
+    ProfondeurMax,
+}
+
+impl Lien {
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Lien::Suivi => "suivi",
+            Lien::SuiviApproche => "suivi-approche",
+            Lien::RacineSysteme => "racine-systeme",
+            Lien::ParentInconnu => "parent-inconnu",
+            Lien::PidReutilise => "pid-reutilise",
+            Lien::ParentTermine => "parent-termine",
+            Lien::ParentService => "parent-service",
+            Lien::ProfondeurMax => "profondeur-max",
+        }
+    }
+}
+
+/// Décision pure (testée) : la raison derrière `parent_vivait`, sans changer la règle : `Suivi` ou `SuiviApproche`
+/// exactement quand `parent_vivait` est vrai ; sinon né après l'enfant (PID repris) ou vu terminé avant sa création
+pub(crate) fn lien_parent(naissance_parent: u64, parent_ordonne: bool, fin_parent: Option<u64>, naissance_enfant: u64) -> Lien {
+    if parent_vivait(naissance_parent, parent_ordonne, fin_parent, naissance_enfant) {
+        if parent_ordonne { Lien::Suivi } else { Lien::SuiviApproche }
+    } else if naissance_parent > naissance_enfant.saturating_add(marge_parent(parent_ordonne)) {
+        Lien::PidReutilise
+    } else {
+        Lien::ParentTermine
+    }
+}
+
+/// Décision pure (testée) : la remontée s'arrête-t-elle à ce parent, et pourquoi ? Mêmes tests, dans le même ordre, que
+/// la boucle d'`ascendance` avant T-20 (parent absent, parent qui ne vivait pas, service, racine par chemin, PID déjà vu,
+/// PID 0 à 4, profondeur) : None, la remontée continue
+pub(crate) fn arret_remontee(lien: Option<Lien>, parent_service: bool, parent_racine: bool, parent_deja_vu: bool, parent_systeme: bool,
+    longueur: usize) -> Option<Lien> {
+    let Some(lien) = lien else { return Some(Lien::ParentInconnu) };
+    if !matches!(lien, Lien::Suivi | Lien::SuiviApproche) {
+        return Some(lien);
+    }
+    if parent_service {
+        return Some(Lien::ParentService);
+    }
+    if parent_racine {
+        return Some(Lien::RacineSysteme);
+    }
+    if parent_deja_vu {
+        return Some(Lien::PidReutilise);
+    }
+    if parent_systeme {
+        return Some(Lien::RacineSysteme);
+    }
+    if longueur >= PROFONDEUR_MAX {
+        return Some(Lien::ProfondeurMax);
+    }
+    None
+}
+
+/// Décision pure (testée) : nom du parent publié pour la tête. Seulement quand l'entrée de la table pour ce PID est le
+/// processus qui vivait à la création de la tête (racine, service, profondeur) ; PID repris, parent vu terminé avant ou
+/// absent : vide (le nom de la table serait celui d'un autre programme). 64 caractères au plus
+pub(crate) fn nom_parent_publie(lien: Lien, nom_dans_la_table: Option<&str>) -> String {
+    match (lien, nom_dans_la_table) {
+        (Lien::RacineSysteme | Lien::ParentService | Lien::ProfondeurMax, Some(n)) => n.chars().take(NOM_PARENT_PUBLIE).collect(),
+        _ => String::new(),
+    }
+}
+
+/// Décision pure (testée) : entité d'incident d'une chaîne (T-3), partagée par l'alerte CHA-001 et etat.json (T-20) :
+/// le programme de tête par son chemin, sauf chemin vide ou tête générique (interpréteur, lanceur) : son identité
+pub(crate) fn entite_chaine(chemin_tete: &str, identite: &str) -> String {
+    let tete = chemin_tete.trim();
+    let generique = std::path::Path::new(tete).file_stem().map(|n| n.to_string_lossy().to_lowercase())
+        .is_some_and(|n| TETES_GENERIQUES.contains(&n.as_str()));
+    if tete.is_empty() || generique { format!("chaine:{identite}") } else { format!("programme:{tete}") }
+}
+
+/// Décision pure (testée) : un signal tel que publié, chaque champ borné (code 100 caractères, heure 23, 8 techniques de
+/// 9 caractères, raison 90)
+pub(crate) fn signal_publie(code: &str, score: i32, heure: &str, techniques: &[String], raison: &str) -> SignalChaine {
+    SignalChaine {
+        code: code.chars().take(CODE_SIGNAL_PUBLIE).collect(),
+        score,
+        heure: heure.chars().take(HEURE_PUBLIEE).collect(),
+        techniques: techniques.iter().take(TECHNIQUES_PUBLIEES).map(|t| t.chars().take(TECHNIQUE_PUBLIEE).collect()).collect(),
+        raison: raison.chars().take(RAISON_PUBLIEE).collect(),
+    }
+}
+
+/// Décision pure (testée) : heure au millième « AAAA-MM-JJ HH:MM:SS.mmm » à partir de l'heure à la seconde déjà mise en
+/// forme (`commun::heure_filetime`) ; base vide (heure illisible) : vide
+pub(crate) fn heure_au_millieme(base: &str, filetime: u64) -> String {
+    if base.is_empty() { String::new() } else { format!("{base}.{:03}", (filetime / 10_000) % 1000) }
+}
+
+/// Heure locale au millième d'un FILETIME (copie publiée des chaînes)
+pub(crate) fn heure_locale_ms(filetime: u64) -> String {
+    heure_au_millieme(&commun::heure_filetime(filetime), filetime)
+}
+
+/// Copie publiée d'une chaîne (pur, testé ; T-20) : les `NOEUDS_PUBLIES` premiers nœuds, le reste compté dans
+/// `noeuds_tronques`. L'ordre publié met toujours un parent avant ses enfants : la copie ne contient jamais un nœud
+/// sans son parent. Heures de création et de fin mises en forme par `heure` (seulement pour ce qui est publié)
+pub(crate) fn chaine_publiee(c: &Chaine, heure: &dyn Fn(u64) -> String) -> Chaine {
+    let noeuds: Vec<NoeudChaine> = c.noeuds.iter().take(NOEUDS_PUBLIES).cloned().map(|mut n| {
+        n.creation = heure(n.naissance_ft);
+        n.fin = n.fin_ft.map(heure).unwrap_or_default();
+        n
+    }).collect();
+    Chaine {
+        racine: c.racine.clone(), score: c.score, resume: c.resume.clone(), depuis: c.depuis.clone(), identite: c.identite.clone(),
+        entite: c.entite.clone(), noeuds_tronques: u32::try_from(c.noeuds.len().saturating_sub(noeuds.len())).unwrap_or(u32::MAX), noeuds,
+    }
+}
+
+/// Processus au plus par chaîne publiée dans etat.json (T-20 ; avant : sans plafond)
+pub const NOEUDS_PUBLIES: usize = 300;
+/// Signaux publiés au plus par processus
+pub const SIGNAUX_PUBLIES: usize = 20;
+const CODE_SIGNAL_PUBLIE: usize = 100;
+const HEURE_PUBLIEE: usize = 23;
+const TECHNIQUES_PUBLIEES: usize = 8;
+const TECHNIQUE_PUBLIEE: usize = 9;
+const RAISON_PUBLIEE: usize = 90;
+const NOM_PARENT_PUBLIE: usize = 64;
+/// Identité et entité publiées : au-delà, vides (jamais tronquées : une clé tronquée désignerait une autre chaîne)
+const CLE_PUBLIEE: usize = 300;
 
 struct Processus {
     nom: String,
@@ -186,8 +377,13 @@ pub(crate) fn heure_4688(xml: &str) -> Option<u64> {
 /// 4688 : strictement pas après ; parent vu d'abord par la liste, heure approchée : marge de quelques cycles), et pas vu terminé avant
 /// sa création. Sinon l'enfant est sa propre racine (PID de parent réutilisé, entrée périmée)
 pub(crate) fn parent_vivait(naissance_parent: u64, parent_ordonne: bool, fin_parent: Option<u64>, naissance_enfant: u64) -> bool {
-    let marge = if parent_ordonne { 0 } else { MARGE_PARENT_APPROCHE };
+    let marge = marge_parent(parent_ordonne);
     naissance_parent <= naissance_enfant.saturating_add(marge) && fin_parent.is_none_or(|f| naissance_enfant <= f)
+}
+
+/// Marge accordée à l'heure du parent : aucune si elle est ordonnée (4688), MARGE_PARENT_APPROCHE sinon
+fn marge_parent(parent_ordonne: bool) -> u64 {
+    if parent_ordonne { 0 } else { MARGE_PARENT_APPROCHE }
 }
 
 /// Décision pure (testée) : une création (4688) décrit-elle le même processus que l'entrée gardée pour ce PID ? Même
@@ -464,38 +660,38 @@ impl Arbre {
         false
     }
 
-    /// Remonte jusqu'à la racine : liste [racine, …, pid], et vrai si l'ascendance réelle passe par le service. Un parent
-    /// n'est suivi que s'il vivait à la création de l'enfant (`parent_vivait`) : sinon l'enfant est sa propre racine
-    fn ascendance(&self, pid: u32) -> (Vec<u32>, bool) {
+    /// Remonte jusqu'à la racine : liste [racine, …, pid], vrai si l'ascendance réelle passe par le service, et la raison
+    /// de l'arrêt (T-20, publiée comme lien de la tête). Un parent n'est suivi que s'il vivait à la création de l'enfant
+    /// (`parent_vivait`) : sinon l'enfant est sa propre racine. Le service n'est jamais un maillon : un enfant direct qui
+    /// n'est pas l'un de ses programmes est sa propre tête. Décision d'arrêt : `arret_remontee` (mêmes tests, même ordre)
+    fn ascendance(&self, pid: u32) -> (Vec<u32>, bool, Lien) {
         let windows = crate::natif::dossier_windows();
         let service = self.pid_service();
         let mut chemin = vec![pid];
         let mut vus = HashSet::from([pid]);
         let mut courant = pid;
         if pid == service {
-            return (chemin, true);
+            return (chemin, true, Lien::ParentService);
         }
+        let mut arret = Lien::ParentInconnu;
         while let Some(p) = self.processus.get(&courant) {
             if p.du_service {
-                return (chemin, true);
+                return (chemin, true, Lien::ParentService);
             }
             let parent = p.parent;
-            let Some(pp) = self.processus.get(&parent) else { break };
-            if !parent_vivait(pp.naissance, pp.exacte || pp.par_4688, pp.fin, p.naissance) {
+            let pp = self.processus.get(&parent);
+            let lien = pp.map(|pp| lien_parent(pp.naissance, pp.exacte || pp.par_4688, pp.fin, p.naissance));
+            let parent_racine = pp.is_some_and(|pp| racine(&pp.chemin, &windows));
+            if let Some(raison) = arret_remontee(lien, parent == service, parent_racine, vus.contains(&parent), parent <= 4, chemin.len()) {
+                arret = raison;
                 break;
             }
-            // Le service n'est jamais un maillon : un enfant direct qui n'est pas l'un de ses programmes est sa propre tête
-            if parent == service {
-                break;
-            }
-            if racine(&pp.chemin, &windows) || !vus.insert(parent) || parent <= 4 || chemin.len() >= PROFONDEUR_MAX {
-                break;
-            }
+            vus.insert(parent);
             chemin.push(parent);
             courant = parent;
         }
         chemin.reverse();
-        (chemin, false)
+        (chemin, false, arret)
     }
 
     /// Chaînes ayant au moins un signal, triées par score décroissant. Hors chaîne : les programmes lancés par le service
@@ -504,14 +700,19 @@ impl Arbre {
     /// un outil qui relance cent fois la même commande ne fait pas monter le score cent fois (T-1)
     pub fn chaines(&self) -> Vec<Chaine> {
         let mut par_racine: HashMap<u32, Vec<Vec<u32>>> = HashMap::new();
+        // Raison de l'arrêt à chaque tête (T-20) : la même pour toutes les remontées sauf profondeur ou boucle ; la plus
+        // petite (ordre de `Lien`) pour un résultat qui ne dépend pas de l'ordre de la table
+        let mut liens_tete: HashMap<u32, Lien> = HashMap::new();
         for &pid in self.signaux.keys() {
             if !self.processus.contains_key(&pid) {
                 continue;
             }
-            let (a, du_service) = self.ascendance(pid);
+            let (a, du_service, arret) = self.ascendance(pid);
             if du_service {
                 continue;
             }
+            let l = liens_tete.entry(a[0]).or_insert(arret);
+            *l = (*l).min(arret);
             par_racine.entry(a[0]).or_default().push(a);
         }
         let mut chaines: Vec<Chaine> = par_racine
@@ -532,6 +733,19 @@ impl Arbre {
                     .map(|&(pid, prof)| {
                         let p = self.processus.get(&pid);
                         let s = self.signaux.get(&pid);
+                        // T-20 : lien au parent. Tête : raison de l'arrêt de la remontée ; maillon : son parent dans la
+                        // chaîne, suivi (même décision que la remontée, relue sur la table)
+                        let parent_pid = p.map(|p| p.parent).unwrap_or(0);
+                        let parent = self.processus.get(&parent_pid);
+                        let lien = if prof == 0 {
+                            liens_tete.get(&racine).copied().unwrap_or(Lien::ParentInconnu)
+                        } else {
+                            match (p, parent) {
+                                (Some(p), Some(pp)) => lien_parent(pp.naissance, pp.exacte || pp.par_4688, pp.fin, p.naissance),
+                                _ => Lien::ParentInconnu,
+                            }
+                        };
+                        let signaux = s.map(|v| v.as_slice()).unwrap_or(&[]);
                         NoeudChaine {
                             profondeur: prof,
                             pid,
@@ -540,6 +754,18 @@ impl Arbre {
                             ligne_commande: p.map(|p| borner(&p.ligne, LIGNE_PUBLIEE)).unwrap_or_default(),
                             score: s.map(|s| s.iter().map(|x| x.score).sum()).unwrap_or(0),
                             raisons: s.map(|s| s.iter().map(|x| x.raison.clone()).collect::<Vec<_>>().join(" ; ")).unwrap_or_default(),
+                            parent_pid,
+                            creation: String::new(),
+                            creation_exacte: p.is_some_and(|p| p.exacte),
+                            vivant: p.is_some_and(|p| p.vivant),
+                            fin: String::new(),
+                            lien: lien.code().into(),
+                            parent_nom: if prof == 0 { nom_parent_publie(lien, parent.map(|pp| pp.nom.as_str())) } else { String::new() },
+                            signaux: signaux.iter().take(SIGNAUX_PUBLIES)
+                                .map(|x| signal_publie(&x.code, x.score, &x.heure, &x.techniques, &x.raison)).collect(),
+                            signaux_tronques: u32::try_from(signaux.len().saturating_sub(SIGNAUX_PUBLIES)).unwrap_or(u32::MAX),
+                            naissance_ft: p.map(|p| p.naissance).unwrap_or(0),
+                            fin_ft: p.and_then(|p| p.fin),
                         }
                     })
                     .collect();
@@ -562,7 +788,13 @@ impl Arbre {
                     .max_by_key(|c| c.len())
                     .map(|c| c.iter().map(|&p| self.nom(p)).collect::<Vec<_>>().join(" → "))
                     .unwrap_or_default();
-                Chaine { racine: self.nom(racine), score, resume, depuis, noeuds }
+                let mut c = Chaine { racine: self.nom(racine), score, resume, depuis, noeuds, ..Default::default() };
+                // T-20 : identité et entité, mêmes calculs que l'alerte (une clé trop longue n'est pas publiée, jamais tronquée)
+                let identite = self.identite(&c);
+                let entite = entite_chaine(c.noeuds.first().map(|n| n.chemin.as_str()).unwrap_or_default(), &identite);
+                c.entite = if entite.chars().count() <= CLE_PUBLIEE { entite } else { String::new() };
+                c.identite = if identite.chars().count() <= CLE_PUBLIEE { identite } else { String::new() };
+                c
             })
             .collect();
         chaines.sort_by(|a, b| b.score.cmp(&a.score));
@@ -622,10 +854,7 @@ impl Arbre {
             fenetre.1 += 1;
             fenetre.2.extend(apports);
             let dernier = c.noeuds.iter().rev().find(|n| n.score > 0).cloned().unwrap_or_default();
-            let tete = c.noeuds.first().map(|n| n.chemin.trim()).unwrap_or_default();
-            let generique = std::path::Path::new(tete).file_stem().map(|n| n.to_string_lossy().to_lowercase())
-                .is_some_and(|n| TETES_GENERIQUES.contains(&n.as_str()));
-            let entite = if tete.is_empty() || generique { format!("chaine:{cle}") } else { format!("programme:{tete}") };
+            let entite = entite_chaine(c.noeuds.first().map(|n| n.chemin.as_str()).unwrap_or_default(), &cle);
             a.push(Alerte {
                 comportement: code_chaine(&signaux.iter().map(|s| (s.code.as_str(), s.raison.as_str())).collect::<Vec<_>>()),
                 regle: crate::regles::CHA_001.into(),

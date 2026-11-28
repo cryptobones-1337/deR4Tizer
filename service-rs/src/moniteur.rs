@@ -2085,12 +2085,16 @@ pub const RELEVES_PARE_FEU_MUET: u32 = 10;
 /// Retrait du mode panique pendant la désinstallation, à échéance
 static NETTOYAGE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Chaînes publiées dans etat.json (30 au plus) : ligne de commande et raisons de chaque nœud secrets masqués (pur, testé ;
-/// audit du 2026-11-23, A-6-1). L'arbre garde la ligne entière : seule la copie publiée est masquée
+/// audit du 2026-11-23, A-6-1). L'arbre garde la ligne entière : seule la copie publiée est masquée. T-20 : 300 processus
+/// au plus par chaîne (`chaines::chaine_publiee`, heures mises en forme), raison de chaque signal masquée comme `Raisons`
 pub(crate) fn chaines_publiees(chaines: &[Chaine]) -> Vec<Chaine> {
-    chaines.iter().take(30).cloned().map(|mut c| {
+    chaines.iter().take(30).map(|c| crate::chaines::chaine_publiee(c, &crate::chaines::heure_locale_ms)).map(|mut c| {
         for n in &mut c.noeuds {
             n.ligne_commande = commun::masquer_secrets(&n.ligne_commande);
             n.raisons = commun::masquer_secrets(&n.raisons);
+            for s in &mut n.signaux {
+                s.raison = commun::masquer_secrets(&s.raison).chars().take(90).collect();
+            }
         }
         c
     }).collect()
