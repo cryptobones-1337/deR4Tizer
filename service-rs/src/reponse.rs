@@ -73,11 +73,15 @@ pub fn origine(chemin: &str) -> Option<Origine> {
 }
 
 impl Origine {
+    /// Texte de l'origine, publié (raisons d'un flux et de son alerte, `Origine` des connexions d'etat.json). L'adresse
+    /// de la marque (HostUrl ou ReferrerUrl, texte externe) a ses secrets masqués sur l'adresse entière, PUIS est coupée à
+    /// 120 caractères (relecture de #324, D1 : coupée d'abord, une adresse compte:motdepasse@hôte coupée avant le « @ »
+    /// laissait son mot de passe, et l'origine publiée n'était jamais masquée)
     pub fn texte(&self) -> Option<String> {
         if self.zone < 3 {
             return None;
         }
-        let source = if self.source.is_empty() { "Internet".to_string() } else { self.source.chars().take(120).collect() };
+        let source = if self.source.is_empty() { "Internet".to_string() } else { commun::masquer_secrets(&self.source).chars().take(120).collect() };
         Some(format!("téléchargé depuis {source}{}", if self.age_jours < 2 { " (il y a moins de 2 jours)" } else { "" }))
     }
 }

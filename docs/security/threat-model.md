@@ -154,11 +154,18 @@ as the service on the channel.
   SIEM, alerts (alertes.json, exports, notifications), chains and connections of `etat.json`; detection analyzes the
   whole line beforehand. Masking is applied to the whole text before any cut (pre-review of #323): a line cut first
   (PRC alert line at 300 characters, tree copy of a 4688 at 1,024, process cache at 8,192, scheduled task command at
-  4,096, response event fields at 300) could lose the `@` of an address cut before it, and its password was then
-  published; every cut now only removes text that is already masked, and a cut cannot rebuild a secret (tests
+  4,096, response event fields at 300, "downloaded from" address of a file's Mark of the Web at 120, also published
+  as the `Origine` of connections in `etat.json`) could lose the `@` of an address cut before it, and its password was
+  then published; every cut now only removes text that is already masked, and a cut cannot rebuild a secret (tests
   `alerte_processus_masque_avant_de_couper`, `copies_bornees_4688_masquees_avant_de_couper`,
   `chaines_ligne_masquee_avant_de_couper`, `commande_tache_masquee_avant_de_couper`,
-  `evenement_reponse_masque_avant_de_couper`). Masking follows known patterns: for any tool (`net use`, `net user`, `/pass:`,
+  `evenement_reponse_masque_avant_de_couper`, `origine_internet_masquee_avant_de_couper`). Detection keeps reading the
+  unmasked text: a scheduled task longer than 4,096 characters is published masked, but its remarks and target are
+  computed on the same command bounded and unmasked, never written (review of #324, test
+  `tache_longue_detection_sur_commande_non_masquee`). Each 4688 line is masked once, and masking costs linear time
+  (a 32,768-character line built to slow it down is masked in a few milliseconds, test
+  `masquer_secrets_cout_lineaire`). Alerts and response events written before this version keep the pieces of a
+  secret cut before its `@` until they leave the history. Masking follows known patterns: for any tool (`net use`, `net user`, `/pass:`,
   `/password:`, `--password`, `-Password`, `-Credential`, `ConvertTo-SecureString`, `PGPASSWORD=` and similar
   variables, `compte:motdepasse@` in an address), and only for the tools that use them this way (`/p` and `/rp` of
   schtasks and of remote Windows tools, `-p` of mysql, psexec, sshpass, 7-Zip and RAR, `-pw` of the PuTTY tools, `-P`

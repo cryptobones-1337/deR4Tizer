@@ -64,7 +64,8 @@ impl Persistance {
         self.bloque_depuis = if hors_delai { self.bloque_depuis.or(Some(std::time::Instant::now())) } else { None };
         self.incomplet = garder_taches_non_vues(&self.reference, &mut releve);
         for e in releve.iter_mut() {
-            e.cible = cible(&e.commande);
+            // Détection et cible sur la commande non masquée (audit de #324, S324-03)
+            e.cible = cible(e.commande_pour_analyse());
             // Cible absolue seulement : un nom relatif non résolu serait cherché dans le dossier courant du service
             e.signataire = if !Path::new(&e.cible).is_absolute() || !Path::new(&e.cible).exists() { "?".into() } else { signataire(&e.cible) };
             e.remarque = evaluer(e);
@@ -180,16 +181,18 @@ pub(crate) fn technique_entree(type_entree: &str) -> &'static str {
 
 pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     let mut r = Vec::new();
+    // Commande non masquée : une tâche longue publie sa commande secrets masqués (audit de #324, S324-03)
+    let commande = e.commande_pour_analyse();
     let exe = Path::new(&e.cible).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
     let tache_windows = e.categorie == "Tâche planifiée" && e.nom.to_lowercase().starts_with(r"\microsoft\windows\");
-    let nettoyage = e.categorie.starts_with("RunOnce") && nettoyage_onedrive(&e.commande);
+    let nettoyage = e.categorie.starts_with("RunOnce") && nettoyage_onedrive(commande);
     if INTERPRETEURS.contains(&exe.as_str()) && !tache_windows && !nettoyage {
         r.push(format!("lancé via {exe}"));
     }
     if e.signataire.is_empty() {
         r.push("NON SIGNÉ".to_string());
     }
-    if let Some(s) = crate::processus::suspicion(&e.commande) {
+    if let Some(s) = crate::processus::suspicion(commande) {
         r.push(s.to_string());
     }
     if dossier_suspect().is_match(&e.cible) {
@@ -201,16 +204,16 @@ pub(crate) fn evaluer(e: &EntreeDemarrage) -> String {
     if e.anomalie {
         r.push(REMARQUE_ANOMALIE_TACHES.into());
     }
-    if e.categorie == "Tâche planifiée" && e.commande == ACTION_NON_RECONNUE {
+    if e.categorie == "Tâche planifiée" && commande == ACTION_NON_RECONNUE {
         r.push("action non reconnue".into());
     }
-    if e.categorie == "Tâche planifiée" && e.commande.contains(MARQUE_TRONQUEE) {
+    if e.categorie == "Tâche planifiée" && commande.contains(MARQUE_TRONQUEE) {
         r.push("commande tronquée".into());
     }
     // Tâche COM hors Windows dont le serveur n'est pas enregistré pour la machine, ou dont le fichier manque :
     // cas du détournement COM par le profil d'un utilisateur (HKCU, non lu ici), signalé plutôt que tu
     // Préfixe « COM » seul (pas le format exact) : un ClassId mal formé ne doit pas faire taire la remarque
-    if !tache_windows && e.categorie == "Tâche planifiée" && e.commande.starts_with("COM ") && !Path::new(&e.cible).is_file() {
+    if !tache_windows && e.categorie == "Tâche planifiée" && commande.starts_with("COM ") && !Path::new(&e.cible).is_file() {
         r.push("serveur COM non enregistré pour la machine".into());
     }
     r.join(", ")
@@ -772,15 +775,19 @@ const MARQUE_TRONQUEE: &str = " [tronquée, sha256 ";
 
 /// Commande d'une tâche bornée (pure, testée). Tronquée : la partie gardée est prise dans la commande secrets masqués
 /// (prérelecture de #323, A-6-1 : coupée avant d'être masquée avec l'alerte, une adresse compte:motdepasse@hôte coupée
-/// avant le « @ » laissait son mot de passe) ; l'empreinte reste celle de la commande non masquée, qui change avec elle
-pub(crate) fn commande_bornee(s: &str) -> String {
+/// avant le « @ » laissait son mot de passe) ; l'empreinte reste celle de la commande non masquée, qui change avec elle.
+/// Rend aussi, tronquée, la même commande bornée NON masquée, que lit la détection (audit de #324, S324-03 :
+/// `EntreeDemarrage::commande_analysee`, jamais écrite)
+pub(crate) fn commande_bornee(s: &str) -> (String, Option<String>) {
     use sha2::{Digest, Sha256};
     if s.chars().count() <= MAX_COMMANDE_TACHE {
-        return s.to_string();
+        return (s.to_string(), None);
     }
-    let debut: String = commun::masquer_secrets(s).chars().take(MAX_COMMANDE_TACHE).collect();
     let empreinte: String = Sha256::digest(s.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-    format!("{debut}{MARQUE_TRONQUEE}{empreinte}]")
+    let marque = format!("{MARQUE_TRONQUEE}{empreinte}]");
+    let publiee: String = commun::masquer_secrets(s).chars().take(MAX_COMMANDE_TACHE).collect();
+    let analysee: String = s.chars().take(MAX_COMMANDE_TACHE).collect();
+    (format!("{publiee}{marque}"), Some(format!("{analysee}{marque}")))
 }
 
 /// Entrée d'une anomalie, reconnue à son indicateur, jamais à son texte
@@ -801,7 +808,14 @@ pub(crate) fn entrees_de_tache(l: &mut Vec<EntreeDemarrage>, chemin: &str, activ
     for (i, a) in actions.iter().enumerate() {
         let nom = if i == 0 { base.clone() } else { format!("{base} : action {}", i + 1) };
         match a {
-            ActionTache::Exec(p, args) => ajouter(l, "Tâche planifiée", &nom, &commande_bornee(format!("{p} {args}").trim())),
+            ActionTache::Exec(p, args) => {
+                let (publiee, analysee) = commande_bornee(format!("{p} {args}").trim());
+                let avant = l.len();
+                ajouter(l, "Tâche planifiée", &nom, &publiee);
+                if let (true, Some(e)) = (l.len() > avant, l.last_mut()) {
+                    e.commande_analysee = analysee;
+                }
+            }
             ActionTache::Com(id) => ajouter(l, "Tâche planifiée", &nom, &commande_com(id)),
             // Vient de la tâche, donc dans la file des nouvelles tâches, pas une anomalie du service (audit de #106, S106-21)
             ActionTache::Autre => ajouter(l, "Tâche planifiée", &nom, ACTION_NON_RECONNUE),

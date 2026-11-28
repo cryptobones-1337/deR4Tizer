@@ -39,8 +39,10 @@ pub struct InfoProcessus {
     /// Nom d'origine du fichier (ressource de version), lu dans le champ OriginalFileName de Sysmon 1 : reconnaît une
     /// copie renommée de PowerShell (audit du 2026-11-23, A-7-1). Absent des 4688 et de WMI
     pub nom_origine: Option<String>,
-    /// Copie publiable de la ligne quand `ligne_commande` a été coupée (cache) : secrets masqués sur la ligne ENTIÈRE,
-    /// puis coupée. None : `ligne_commande` est entière, la copie publiable se calcule depuis elle (`ligne_publiee`)
+    /// Copie publiable déjà calculée : secrets masqués sur la ligne ENTIÈRE, puis coupée comme `ligne_commande` dans le
+    /// cache (ligne longue). Posée aussi pendant l'analyse d'un 4688 (ligne entière masquée une seule fois, S324-01). None :
+    /// la copie publiable se calcule depuis `ligne_commande`, alors entière (`ligne_publiee`) ; dans le cache, None dès que
+    /// la ligne est plus courte que `LIGNE_CACHE` (audit de #324, S324-06)
     ligne_masquee: Option<String>,
     vu: Instant,
 }
@@ -66,6 +68,16 @@ impl InfoProcessus {
             ligne_masquee: None,
             vu: Instant::now(),
         }
+    }
+
+    /// Une copie masquée est-elle gardée (S324-06) ?
+    pub(crate) fn a_copie_masquee(&self) -> bool {
+        self.ligne_masquee.is_some()
+    }
+
+    /// Copie masquée posée comme pendant l'analyse d'un 4688 (`traiter_4688`)
+    pub(crate) fn poser_copie_masquee(&mut self, copie: &str) {
+        self.ligne_masquee = Some(copie.into());
     }
 
     /// Même processus, avec le nom d'origine du fichier que Sysmon aurait lu
@@ -334,18 +346,22 @@ pub(crate) fn info_depuis_4688(c: &Creation4688, cache: Option<&InfoProcessus>) 
 pub(crate) const LIGNE_ARBRE: usize = 1024;
 pub(crate) const LIGNE_CACHE: usize = 8192;
 
-/// Décision pure (testée) : copie d'un 4688 pour l'arbre des chaînes, dont la ligne n'est que publiée (etat.json) : secrets
-/// masqués sur la ligne entière, puis bornée à `LIGNE_ARBRE` (prérelecture de #323, A-6-1 : masquer avant de couper)
-pub(crate) fn copie_pour_arbre(c: &Creation4688) -> Creation4688 {
+/// Décision pure (testée) : copie d'un 4688 pour l'arbre des chaînes, dont la ligne n'est que publiée (etat.json) : la
+/// ligne entière secrets masqués (`masquee`, `commun::masquer_secrets` de la ligne de `c`, calculée une seule fois par
+/// 4688 : audit de #324, S324-01), bornée à `LIGNE_ARBRE` (prérelecture de #323, A-6-1 : masquer avant de couper)
+pub(crate) fn copie_pour_arbre(c: &Creation4688, masquee: Option<&str>) -> Creation4688 {
     let mut pour_arbre = c.clone();
-    pour_arbre.ligne_commande = pour_arbre.ligne_commande.map(|l| commun::masquer_secrets(&l).chars().take(LIGNE_ARBRE).collect());
+    pour_arbre.ligne_commande = masquee.map(|m| m.chars().take(LIGNE_ARBRE).collect());
     pour_arbre
 }
 
 /// Décision pure (testée) : description gardée dans le cache (origine des connexions) : ligne bornée à `LIGNE_CACHE` pour
-/// la détection (non masquée) ; copie publiable masquée sur la ligne entière, puis bornée (A-6-1 : masquer avant de couper)
+/// la détection (non masquée). Ligne longue (au moins `LIGNE_CACHE` caractères : coupée ici, ou prêtée déjà coupée par le
+/// cache) : copie publiable masquée sur la ligne entière (`ligne_publiee`, qui reprend la copie masquée déjà calculée),
+/// puis bornée (A-6-1 : masquer avant de couper). Plus courte : la ligne est entière, aucune copie gardée (S324-06)
 pub(crate) fn info_pour_cache(mut info: InfoProcessus) -> InfoProcessus {
-    info.ligne_masquee = info.ligne_publiee().map(|l| l.chars().take(LIGNE_CACHE).collect());
+    let longue = info.ligne_commande.as_ref().is_some_and(|l| l.chars().count() >= LIGNE_CACHE);
+    info.ligne_masquee = if longue { info.ligne_publiee().map(|l| l.chars().take(LIGNE_CACHE).collect()) } else { None };
     info.ligne_commande = info.ligne_commande.map(|l| l.chars().take(LIGNE_CACHE).collect());
     info
 }
@@ -923,16 +939,22 @@ impl Processus {
         if !audit_analyse(self.audit.load(Ordering::Relaxed)) {
             self.reveil.store(true, Ordering::Relaxed);
         }
+        // Ligne masquée une seule fois par 4688 (audit de #324, S324-01), hors verrou, pour l'arbre, l'alerte et le cache
+        let masquee = c.ligne_commande.as_deref().map(commun::masquer_secrets);
         {
             let mut v = self.creations.lock().unwrap();
             if v.len() >= 5_000 {
                 v.pop_front();
             }
             // Copie pour l'arbre : ligne bornée (l'analyse, elle, lit la ligne entière ; audit de #244, S244-04)
-            v.push_back(copie_pour_arbre(&c));
+            v.push_back(copie_pour_arbre(&c, masquee.as_deref()));
         }
         let cache = self.infos.lock().unwrap().get(&c.pid).cloned();
-        let info = info_depuis_4688(&c, cache.as_ref());
+        let mut info = info_depuis_4688(&c, cache.as_ref());
+        // Copie publiable déjà calculée : l'alerte et le cache la reprennent sans masquer de nouveau
+        if masquee.is_some() {
+            info.ligne_masquee = masquee;
+        }
         self.analyser(c.pid, &info);
         // Cache (origine des connexions, gardé une heure) : ligne bornée (audit de #244, S244-04)
         self.infos.lock().unwrap().insert(c.pid, info_pour_cache(info));

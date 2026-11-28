@@ -7397,6 +7397,47 @@ fn structure_4688_et_siem_masques() {
     assert!(moniteur.contains("ligne_commande: origine.as_ref().and_then(processus::InfoProcessus::ligne_publiee),"));
 }
 
+/// Audit de #324, S324-01 : coût du masquage, appelé sur la ligne entière d'un 4688 (32 768 caractères au plus) dans le
+/// fil de détection. Lignes piégées (`net use` répété : la boucle de `net use` reparcourait la ligne jusqu'au bout pour
+/// chaque couple, 173 ms mesurés ; guillemets ; mots simples ; `net user`) : chacune sous 50 ms en release (meilleur de 5 ;
+/// coût linéaire mesuré : 4 à 8 ms seul, 15 ms au plus pendant la suite parallèle ; ancienne boucle : 126 à 161 ms)
+#[test]
+fn masquer_secrets_cout_lineaire() {
+    let pieges = [("net use", "net use ".repeat(4096)), ("net user", "net user ".repeat(3641)), ("net use Z:", "net use Z: ".repeat(2979)),
+        ("guillemets", "\"a\" ".repeat(8192)), ("mots", "a ".repeat(16_384)), ("schtasks /p", "schtasks /p x ".repeat(2340))];
+    let mut lents = Vec::new();
+    for (nom, l) in pieges {
+        let l: String = l.chars().take(32_768).collect();
+        let meilleur = (0..5).map(|_| {
+            let t = std::time::Instant::now();
+            std::hint::black_box(crate::commun::masquer_secrets(std::hint::black_box(&l)));
+            t.elapsed()
+        }).min().unwrap_or_default();
+        eprintln!("masquer_secrets, {nom} ({} caractères) : {meilleur:?}", l.chars().count());
+        if meilleur >= std::time::Duration::from_millis(50) {
+            lents.push(format!("{nom} : {meilleur:?}"));
+        }
+    }
+    assert!(lents.is_empty(), "{lents:?}");
+}
+
+/// Audit de #324, S324-01 : la boucle de `net use` / `net user` en un seul passage masque exactement comme avant
+/// (mêmes résultats avec l'ancienne boucle ; corpus de 60 000 lignes identique) : arrêt au séparateur, premier `net user`
+/// de la commande compté depuis son début, lecteur et chemin réseau gardés pour `net use`
+#[test]
+fn masquer_net_un_seul_passage() {
+    use crate::commun::masquer_secrets;
+    for (ligne, attendu) in [
+        (r"net use Z: \\srv\c P1 & echo a b", r"net use Z: \\srv\c *** & echo a b"),
+        ("net user bob P2 & echo a b", "net user bob *** & echo a b"),
+        ("net user bob P3 net user x", "net user bob *** *** *** ***"),
+        (r"net use * \\srv\c /user:dom\u P4 /persistent:no", r"net use * \\srv\c /user:dom\u *** /persistent:no"),
+        ("echo net use; net1.exe user a b", "echo net use; net1.exe user a ***"),
+    ] {
+        assert_eq!(masquer_secrets(ligne), attendu, "{ligne}");
+    }
+}
+
 /// Secret des essais « masquer avant de couper » : aucun de ses morceaux de 3 caractères n'apparaît ailleurs dans les
 /// lignes d'essai
 pub(crate) const SECRET_COUPE: &str = "Zq7Xw9Kp4Lm2Vb8N";
@@ -7454,7 +7495,9 @@ fn copies_bornees_4688_masquees_avant_de_couper() {
     for (avant, apres) in SECRETS_A_CHEVAL {
         let ligne = ligne_coupee("outil.exe", LIGNE_ARBRE, avant, apres);
         let c = Creation4688 { pid: 10, image: r"C:\O\outil.exe".into(), ligne_commande: Some(ligne), ppid: None, parent_image: None, heure: None };
-        let l = copie_pour_arbre(&c).ligne_commande.expect("ligne");
+        // Ligne masquée une seule fois par 4688 (S324-01), comme `traiter_4688`
+        let masquee = c.ligne_commande.as_deref().map(crate::commun::masquer_secrets);
+        let l = copie_pour_arbre(&c, masquee.as_deref()).ligne_commande.expect("ligne");
         assert!(!fuite_du_secret(&l) && l.chars().count() <= LIGNE_ARBRE && l.starts_with("outil.exe"), "{l}");
         let ligne = ligne_coupee("outil.exe", LIGNE_CACHE, avant, apres);
         let info = info_pour_cache(InfoProcessus::pour_test(r"C:\O\outil.exe", Some(&ligne), None));
@@ -7464,11 +7507,53 @@ fn copies_bornees_4688_masquees_avant_de_couper() {
             "la détection lit la ligne non masquée");
         // 4688 sans ligne : la ligne prêtée par le cache vient avec sa copie masquée
         let sans = Creation4688 { pid: 10, image: r"C:\O\outil.exe".into(), ligne_commande: None, ppid: None, parent_image: None, heure: None };
-        assert!(info_depuis_4688(&sans, Some(&info)).ligne_publiee().is_some_and(|l| !fuite_du_secret(&l)));
+        let pretee = info_depuis_4688(&sans, Some(&info));
+        assert!(pretee.ligne_publiee().is_some_and(|l| !fuite_du_secret(&l)));
+        // Remise au cache (ligne prêtée déjà coupée, 8 192 caractères) : la copie masquée reste
+        assert!(info_pour_cache(pretee).ligne_publiee().is_some_and(|l| !fuite_du_secret(&l)));
     }
-    // Ligne courte : la copie publiable est la ligne masquée, entière
+    // Ligne courte : entière, aucune copie gardée dans le cache (S324-06) ; la copie publiable est la ligne masquée
     let court = info_pour_cache(InfoProcessus::pour_test(r"C:\O\outil.exe", Some("outil -Password Zq7 -x"), None));
+    assert!(!court.a_copie_masquee());
     assert_eq!(court.ligne_publiee().as_deref(), Some("outil -Password *** -x"));
+    // Copie déjà calculée pendant l'analyse d'un 4688 à ligne courte : retirée du cache
+    let mut analyse = InfoProcessus::pour_test(r"C:\O\outil.exe", Some("outil -Password Zq7 -x"), None);
+    analyse.poser_copie_masquee("outil -Password *** -x");
+    assert!(!info_pour_cache(analyse).a_copie_masquee());
+}
+
+/// Audit de #324, S324-01 : `traiter_4688` masque la ligne une seule fois et partage le résultat entre la copie de l'arbre,
+/// l'alerte et le cache (contrôle du source)
+#[test]
+fn traiter_4688_masque_une_seule_fois() {
+    let src = include_str!("processus.rs");
+    let corps = &src[src.find("pub(crate) fn traiter_4688(").unwrap()..];
+    let corps = &corps[..corps.find("\n    }").unwrap()];
+    assert_eq!(corps.matches("masquer_secrets").count(), 1, "{corps}");
+    assert!(corps.contains("let masquee = c.ligne_commande.as_deref().map(commun::masquer_secrets);"));
+    assert!(corps.contains("copie_pour_arbre(&c, masquee.as_deref())") && corps.contains("info.ligne_masquee = masquee;"));
+    assert!(corps.find("info.ligne_masquee = masquee;") < corps.find("self.analyser(c.pid, &info);"), "copie posée avant l'analyse");
+    assert!(corps.contains("info_pour_cache(info)"));
+}
+
+/// Relecture de #324, D1 : l'adresse de la marque « téléchargé depuis Internet » (HostUrl ou ReferrerUrl de
+/// Zone.Identifier, texte externe) était coupée à 120 caractères avant d'être masquée, et l'origine publiée dans etat.json
+/// (`Origine` des connexions) n'était jamais masquée : masquée sur l'adresse entière, puis coupée
+#[test]
+fn origine_internet_masquee_avant_de_couper() {
+    // Le mot de passe commence à la position 115 : une coupe à 120 en garde les 5 premiers caractères, avant le « @ »
+    for coupe in 100..=140 {
+        let source = format!("https://{}:{SECRET_COUPE}@exemple.test/f.exe", "a".repeat(coupe - 9));
+        let o = crate::reponse::Origine { zone: 3, source, age_jours: 5, hors_delai: false };
+        let t = o.texte().expect("texte");
+        assert!(!fuite_du_secret(&t) && t.starts_with("téléchargé depuis https://"), "{t}");
+    }
+    let o = crate::reponse::Origine { zone: 3, source: format!("https://{}:{SECRET_COUPE}@exemple.test/f.exe", "a".repeat(106)), age_jours: 5, hors_delai: false };
+    assert!(o.source.chars().take(120).collect::<String>().ends_with(&SECRET_COUPE[..5]), "placement du secret");
+    // Publiée telle quelle : raisons du flux et champ `Origine` d'etat.json (contrôle du source)
+    let moniteur = include_str!("moniteur.rs");
+    assert!(moniteur.contains("let texte_origine = origine_fichier.as_ref().and_then(|o| o.texte());"));
+    assert!(moniteur.contains("                origine: texte_origine,"));
 }
 
 /// Même défaut, commande d'une tâche planifiée bornée à 4 096 caractères (alerte PER-001/002) : la partie gardée est
@@ -7488,8 +7573,30 @@ fn commande_tache_masquee_avant_de_couper() {
         crate::commun::borner_alerte(&mut a);
         assert!(!fuite_du_secret(&a.raisons) && !fuite_du_secret(&e.commande), "{}", a.raisons);
     }
-    // Commande sous la borne : inchangée (masquée plus tard, avec l'alerte)
-    assert_eq!(crate::persistance::commande_bornee("outil -Password Zq7"), "outil -Password Zq7");
+    // Commande sous la borne : inchangée (masquée plus tard, avec l'alerte), aucune copie pour l'analyse
+    assert_eq!(crate::persistance::commande_bornee("outil -Password Zq7"), ("outil -Password Zq7".to_string(), None));
+}
+
+/// Audit de #324, S324-03 : une tâche de plus de 4 096 caractères publie sa commande secrets masqués ; la détection
+/// (remarques PER, cible) lit la commande bornée NON masquée : un motif PRC-002 placé dans la valeur de -Password est vu
+#[test]
+fn tache_longue_detection_sur_commande_non_masquee() {
+    let p = r"C:\Windows\System32\forfiles.exe";
+    let args = format!(r#"/p C:\ /c "cmd /c powershell -nop -Password 'IEX(New-Object Net.WebClient).DownloadString(x)'" {}"#, "x".repeat(5000));
+    let attendu = crate::processus::suspicion(&format!("{p} {args}")).expect("motif vu sur la commande brute");
+    let mut l = Vec::new();
+    crate::persistance::entrees_de_tache(&mut l, r"\Tache", true, &[crate::persistance::ActionTache::Exec(p.into(), args)]);
+    let mut e = l.into_iter().next().expect("entrée");
+    assert!(!e.commande.contains("IEX") && e.commande.contains("-Password"), "copie publiée masquée : {}", &e.commande[..200]);
+    assert!(e.commande_pour_analyse().contains("IEX(New-Object Net.WebClient)"));
+    // Comme `Persistance::verifier` (contrôle du source : la cible y est calculée sur la commande non masquée)
+    assert!(include_str!("persistance.rs").contains("e.cible = cible(e.commande_pour_analyse());"));
+    e.cible = crate::persistance::cible(e.commande_pour_analyse());
+    let remarque = crate::persistance::evaluer(&e);
+    assert!(remarque.contains(attendu) && remarque.contains("commande tronquée"), "{remarque}");
+    // La copie pour l'analyse n'est jamais écrite (demarrage.json, etat.json)
+    let json = serde_json::to_string(&e).expect("JSON");
+    assert!(!json.contains("IEX") && !json.contains("CommandeAnalysee"), "{json}");
 }
 
 /// Même défaut, événement d'une action de réponse (SIEM) : cible, message et déclencheur bornés à 300 caractères, masqués
