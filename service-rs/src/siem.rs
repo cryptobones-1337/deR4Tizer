@@ -166,8 +166,11 @@ pub(crate) const ACTIONS_DE_REPONSE: &[&str] = &[
 /// Événement d'une action de réponse (pur, testé) : action, cible, résultat (réussi, ou refusé avec la raison) et
 /// déclencheur (« commande d'administrateur », ou « automatique : <raison> »)
 pub(crate) fn evenement_reponse(action: &str, cible: &str, ok: bool, message: &str, declencheur: &str) -> Evenement {
-    // Audit de #94, S94-01 : la cible vient du canal, même quand la validation la refuse ; bornée et nettoyée partout
-    let (cible, message, declencheur) = (texte_sur(cible, 300), texte_sur(message, 300), texte_sur(declencheur, 300));
+    // Audit de #94, S94-01 : la cible vient du canal, même quand la validation la refuse ; bornée et nettoyée partout.
+    // Secrets masqués avant la coupe (prérelecture de #323, A-6-1) : `enregistrer` masque encore, trop tard pour une
+    // adresse compte:motdepasse@hôte coupée avant le « @ »
+    let borne = |s: &str| texte_sur(&commun::masquer_secrets(s), 300);
+    let (cible, message, declencheur) = (borne(cible), borne(message), borne(declencheur));
     Evenement {
         heure: commun::maintenant(),
         source: "reponse".into(),

@@ -158,6 +158,17 @@ pub struct EntreeDemarrage {
     pub remarque: String,
     #[serde(deserialize_with = "nul_vide")]
     pub depuis: String,
+    /// Commande lue par la détection quand `commande` (publiée) a été bornée secrets masqués : la même commande bornée,
+    /// NON masquée (audit de #324, S324-03 : la détection lit la ligne non masquée). Jamais écrite ni publiée
+    #[serde(skip)]
+    pub commande_analysee: Option<String>,
+}
+
+impl EntreeDemarrage {
+    /// Commande que lit la détection (cible, remarques) : jamais la copie masquée
+    pub fn commande_pour_analyse(&self) -> &str {
+        self.commande_analysee.as_deref().unwrap_or(&self.commande)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -1648,6 +1659,47 @@ fn est_net(v: &str) -> bool {
     matches!(v.rsplit(['\\', '/']).next().unwrap_or(""), "net" | "net.exe" | "net1" | "net1.exe")
 }
 
+/// Mots masqués en entier comme mot de passe de `net use` ou `net user`, en un seul passage (audit de #324, S324-01 : chaque
+/// couple `net use` reparcourait la ligne jusqu'au séparateur suivant, coût quadratique). Entre deux séparateurs, un mot
+/// après un `net use` (deux mots après le `net`) est masqué s'il n'est ni une option, ni `*`, ni un lecteur, ni un chemin
+/// réseau ; après un `net user`, tout argument qui n'est ni une option ni `*` à partir du deuxième. Le premier `net use`
+/// et le premier `net user` d'une commande suffisent : un suivant ne masque qu'une partie de ce qu'ils masquent déjà
+fn mots_de_net(s: &str, mots: &[(usize, usize)]) -> Vec<bool> {
+    let texte = |k: usize| mots.get(k).and_then(|&(a, b)| s.get(a..b)).unwrap_or("");
+    let mut net = vec![false; mots.len()];
+    // Début (indice du premier mot visé) du premier `net use` et du premier `net user` de la commande ; arguments vus
+    // depuis ce `net user`
+    let (mut depuis_use, mut depuis_user, mut positionnels): (Option<usize>, Option<usize>, usize) = (None, None, 0);
+    for (j, masque) in net.iter_mut().enumerate() {
+        let v = texte(j);
+        if separateur_de_commandes(v) {
+            (depuis_use, depuis_user, positionnels) = (None, None, 0);
+            continue;
+        }
+        if !v.starts_with('/') && v != "*" {
+            let lecteur = v.len() == 2 && v.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) && v.ends_with(':');
+            let reseau = v.trim_start_matches('"').starts_with("\\\\") || v.contains("://");
+            let par_use = depuis_use.is_some_and(|d| j >= d) && !lecteur && !reseau;
+            let mut par_user = false;
+            if depuis_user.is_some_and(|d| j >= d) {
+                positionnels += 1;
+                par_user = positionnels >= 2;
+            }
+            *masque = par_use || par_user;
+        }
+        let (a, z) = interieur(v);
+        if est_net(v.get(a..z).unwrap_or("")) {
+            let suivant = texte(j + 1);
+            if suivant.eq_ignore_ascii_case("use") && depuis_use.is_none() {
+                depuis_use = Some(j + 2);
+            } else if suivant.eq_ignore_ascii_case("user") && depuis_user.is_none() {
+                (depuis_user, positionnels) = (Some(j + 2), 0);
+            }
+        }
+    }
+    net
+}
+
 /// `herites` : outils à secret actifs là où ce texte est cité (`Start-Process schtasks -ArgumentList '/p x'`, revue de #269)
 fn masquer_mots(s: &str, profondeur: u8, herites: &[String]) -> String {
     let mots = mots_de_commande(s);
@@ -1664,7 +1716,15 @@ fn masquer_mots(s: &str, profondeur: u8, herites: &[String]) -> String {
     let mut actifs: Vec<String> = herites.to_vec();
     let mut outil = String::new();
     let mut tete = true;
+    let net = mots_de_net(s, &mots);
     for k in 0..mots.len() {
+        // Mot de passe de `net use` / `net user` (`mots_de_net`) : posé au même moment qu'avant (au plus tard deux mots
+        // après le `net`, avant tout autre masque de ce mot), pour que les masques suivants le remplacent comme avant
+        if net.get(k + 2) == Some(&true) {
+            if let Some(m) = masques.get_mut(k + 2) {
+                *m = Some((0, texte(k + 2).len()));
+            }
+        }
         let brut = texte(k);
         // Mot sans parenthèses ni guillemets de tableau (`@('/p'` → `/p`) ; `a` : décalage de sa partie utile
         let (a, z) = interieur(brut);
@@ -1724,26 +1784,6 @@ fn masquer_mots(s: &str, profondeur: u8, herites: &[String]) -> String {
             if valeur_litterale(texte(j)) && !texte(j).starts_with('-') {
                 if let Some(m) = masques.get_mut(j) {
                     *m = Some((0, texte(j).len()));
-                }
-            }
-        }
-        if est_net(t) && (texte(k + 1).eq_ignore_ascii_case("use") || texte(k + 1).eq_ignore_ascii_case("user")) {
-            let user = texte(k + 1).eq_ignore_ascii_case("user");
-            let mut positionnels = 0;
-            for j in k + 2..mots.len() {
-                let v = texte(j);
-                if separateur_de_commandes(v) {
-                    break;
-                }
-                if v.starts_with('/') || v == "*" {
-                    continue;
-                }
-                positionnels += 1;
-                let lecteur = v.len() == 2 && v.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) && v.ends_with(':');
-                let reseau = v.trim_start_matches('"').starts_with("\\\\") || v.contains("://");
-                // net use : tout sauf le lecteur et le chemin réseau ; net user : le mot de passe suit le nom du compte
-                if (!user && !lecteur && !reseau) || (user && positionnels >= 2) {
-                    masques[j] = Some((0, v.len()));
                 }
             }
         }
