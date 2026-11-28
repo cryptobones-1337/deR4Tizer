@@ -675,7 +675,12 @@ namespace DeR4Tizer
     {
         public string Code { get; set; } public long Entrant { get; set; } public long Sortant { get; set; } public int Destinations { get; set; }
         public List<string> Programmes { get; set; } public bool Active { get; set; }
+        // T-19 (PR #311) : absents d'un service plus ancien (null, 0) ; détail seulement pour les 30 plus gros pays
+        public List<TraficProgrammePays> ProgrammesVolumes { get; set; } public List<TraficDestinationPays> DestinationsPrincipales { get; set; }
+        public long DebitEntrantRecent { get; set; } public long DebitSortantRecent { get; set; }
     }
+    public class TraficProgrammePays { public string Nom { get; set; } public long Entrant { get; set; } public long Sortant { get; set; } }
+    public class TraficDestinationPays { public string Ip { get; set; } public string Nom { get; set; } public string Programme { get; set; } public long Entrant { get; set; } public long Sortant { get; set; } }
     public class TraficPort { public string Port { get; set; } public long Octets { get; set; } }
     // Raison : « HorsTcpUdp », « SansPort », « SansProprietaire » (ligne « ? ») ou « ProcessusTermine » (lignes « PID n »)
     public class TraficNonAttribue { public string Raison { get; set; } public long Entrant { get; set; } public long Sortant { get; set; } }
@@ -688,6 +693,8 @@ namespace DeR4Tizer
         public List<TraficDestination> Destinations { get; set; } public List<TraficPays> Pays { get; set; } public List<TraficPort> Ports { get; set; }
         // Octets sans programme nommé, par raison (T-4, PR #308) ; vide pour un service plus ancien
         public List<TraficNonAttribue> NonAttribue { get; set; }
+        // Pays des connexions signalées (T-19, PR #311) ; null : service plus ancien (champ absent)
+        public List<string> PaysSignales { get; set; }
     }
 
     // ------------------------------------------------------------ réseau local (reseau.json)

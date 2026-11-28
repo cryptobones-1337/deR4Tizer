@@ -349,6 +349,8 @@ no setting); fields absent from files written before, read back empty (`serde(de
 | `Pays[].DebitEntrantRecent`, `Pays[].DebitSortantRecent` | integer (bytes per second) | throughput of the country since the second-to-last write of the file (about 10 s, measured duration), for the thickness of the arcs (`trafic::debit_recent`, `trafic::decaler_cliches`) |
 | `PaysSignales` | list of country codes | countries of the connections flagged at the monitor's last reading, at the same threshold as the "Suspicious" tab of Connections (score at the alert threshold, or known threat); sorted, without duplicates; 50 at most (`MAX_PAYS_SIGNALES`); IPv4 addresses only, 500 at most (`moniteur::ips_signalees`) |
 
+Read by the interface since step 2 (interactive map of the Traffic page, `VueTraficFluent` and `CarteFluent` in `src/Fluent.cs`): a file without these fields (older service) gives a map without arcs and without per-country detail, said as such.
+
 `ProgrammesVolumes` and `DestinationsPrincipales` are only filled for the 30 largest countries
 (`MAX_PAYS_DETAILLES`), empty beyond that. Size of the `Pays` list at worst (250 countries, names of more than 250 characters, existing `Programmes` list
 included): about 880 KB measured with ASCII names (audit of #311, S311-01); more with non-ASCII names
