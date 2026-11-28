@@ -2877,7 +2877,31 @@ namespace DeR4Tizer
         public static bool Termine(NoeudChaine n) { return Publie(n) && n.Vivant == false; }
 
         // Chemin coupé par le service (au-delà de 1 024 caractères, « … » à la fin) : il ne désigne plus un fichier
-        public static bool CheminCoupe(string chemin) { return !string.IsNullOrEmpty(chemin) && chemin.EndsWith("…", StringComparison.Ordinal); }
+        // Seule la coupe du service est reconnue (chaines::borner avec CHEMIN_PUBLIE = 1024) : 1 024 caractères (points de
+        // code, comme chars() en Rust) puis « … », soit exactement 1 025 points de code. Un chemin non coupé en a 1 024 au
+        // plus ; « … » est permis dans un nom de fichier Windows, un chemin plus court qui finit ainsi garde ses actions
+        // (prérelecture de #325, D1)
+        public const int CheminPublie = 1024;
+        public static bool CheminCoupe(string chemin)
+        {
+            if (string.IsNullOrEmpty(chemin) || !chemin.EndsWith("…", StringComparison.Ordinal)) return false;
+            return PointsDeCode(chemin) == CheminPublie + 1;
+        }
+
+        // Nombre de points de code (une paire de substitution compte pour un), et non d'unités UTF-16
+        public static int PointsDeCode(string s)
+        {
+            if (s == null) return 0;
+            int n = 0;
+            for (int i = 0; i < s.Length; i++) { if (char.IsHighSurrogate(s[i]) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1])) i++; n++; }
+            return n;
+        }
+
+        // L'alerte liée est-elle parmi celles que la page Alertes affiche (les 500 plus récentes, VueAlertesFluent.Filtrer) ?
+        public static bool AlerteAffichee(Alerte lien, IList<Alerte> alertes)
+        {
+            return lien != null && VueAlertesFluent.Filtrer(alertes, null).Any(a => a.Id == lien.Id);
+        }
 
         public static bool Garde(NoeudChaine n, int filtre)
         {
@@ -3670,6 +3694,13 @@ namespace DeR4Tizer
             return t;
         }
 
+        // Résumé sans l'heure d'etat.json : la signature ne change pas à chaque réécriture du fichier (le texte de l'heure
+        // est mis à jour sans reconstruire la page ; prérelecture de #325, D2)
+        string ResumeSansHeure()
+        {
+            return VueChainesFluent.Resume(chaines, lu, illisible, null, panne) + "#" + tronquees;
+        }
+
         protected override void Afficher()
         {
             resume.Text = Resume();
@@ -3726,7 +3757,7 @@ namespace DeR4Tizer
             var noeuds = c0 == null ? new List<NoeudChaine>() : (c0.Noeuds ?? new List<NoeudChaine>());
             var n0 = noeuds.FirstOrDefault(n => n.Pid == noeud) ?? noeuds.OrderByDescending(n => n.Score).FirstOrDefault();
             noeud = n0 == null ? (int?)null : n0.Pid;
-            string signature = "T#" + choisie + "#" + noeud + "#" + resume.Text + "#" + string.Join(";", chaines.Select(c => VueChainesFluent.Cle(c) + "|" + c.Score + "|" + string.Join(",", (c.Noeuds ?? new List<NoeudChaine>()).Select(n => n.Pid + ":" + n.Score + ":" + n.Vivant + ":" + n.Chemin))));
+            string signature = "T#" + choisie + "#" + noeud + "#" + ResumeSansHeure() + "#" + string.Join(";", chaines.Select(c => VueChainesFluent.Cle(c) + "|" + c.Score + "|" + string.Join(",", (c.Noeuds ?? new List<NoeudChaine>()).Select(n => n.Pid + ":" + n.Score + ":" + n.Vivant + ":" + n.Chemin))));
             if (signature == vu) return;
             vu = signature;
             liste.Children.Clear();
@@ -3887,6 +3918,12 @@ namespace DeR4Tizer
             return null;
         }
 
+        string SignatureGraphe(Chaine c0, Alerte lien, IncidentSuivi inc)
+        {
+            return "G#" + choisie + "#" + choixCase + "#" + courant + "#" + filtre + "#" + regrouper + "#" + tousMembres + "#" + resumeOuvert + "#" + faireOuvert + "#" + ResumeSansHeure() + "#" + (alertes == null ? "?" : lien == null ? "-" : lien.Id + lien.Niveau) + "#" + (inc == null ? "-" : inc.Id + inc.Etat) + "#"
+                + string.Join(";", chaines.Select(c => VueChainesFluent.Cle(c) + "|" + c.Score + "|" + c.NoeudsTronques + "|" + (c == c0 ? string.Join(",", (c.Noeuds ?? new List<NoeudChaine>()).Where(n => n != null).Select(n => n.Pid + ":" + n.Score + ":" + n.Vivant + ":" + n.Fin + ":" + n.Lien + ":" + VueChainesFluent.Signaux(n).Count + ":" + n.SignauxTronques + ":" + n.Chemin)) : (c.Noeuds == null ? 0 : c.Noeuds.Count).ToString())));
+        }
+
         void AfficherGraphe()
         {
             if (!grapheConstruit) ConstruireGraphe();
@@ -3899,8 +3936,7 @@ namespace DeR4Tizer
             if (c0 != null && !VueChainesFluent.FiltrePropose(c0, filtre)) filtre = 0;
             var lien = VueChainesFluent.AlerteLiee(c0, alertes);
             var inc = VueChainesFluent.IncidentLie(c0, incidents);
-            string signature = "G#" + choisie + "#" + choixCase + "#" + courant + "#" + filtre + "#" + regrouper + "#" + tousMembres + "#" + resumeOuvert + "#" + faireOuvert + "#" + resume.Text + "#" + (alertes == null ? "?" : lien == null ? "-" : lien.Id + lien.Niveau) + "#" + (inc == null ? "-" : inc.Id + inc.Etat) + "#"
-                + string.Join(";", chaines.Select(c => VueChainesFluent.Cle(c) + "|" + c.Score + "|" + c.NoeudsTronques + "|" + (c == c0 ? string.Join(",", (c.Noeuds ?? new List<NoeudChaine>()).Where(n => n != null).Select(n => n.Pid + ":" + n.Score + ":" + n.Vivant + ":" + n.Fin + ":" + n.Lien + ":" + VueChainesFluent.Signaux(n).Count + ":" + n.SignauxTronques + ":" + n.Chemin)) : (c.Noeuds == null ? 0 : c.Noeuds.Count).ToString())));
+            string signature = SignatureGraphe(c0, lien, inc);
             if (signature == vu) return;
             vu = signature;
             bool focusFiltres = hoteFiltres.IsKeyboardFocusWithin;
@@ -3926,6 +3962,9 @@ namespace DeR4Tizer
             DessinerGraphe(c0, choix);
             hoteBas.Content = BasGraphe(c0);
             hoteDetail.Content = DetailCase(c0, choix, lien);
+            // Case choisie et case du focus posées pendant la construction : la signature retenue les contient, sinon le
+            // rafraîchissement suivant reconstruirait une fois pour rien
+            vu = SignatureGraphe(c0, lien, inc);
         }
 
         // Sélecteur : une pastille par chaîne suspecte (niveau en mots) ; Tab y entre une fois, les flèches passent de l'une à l'autre
@@ -4053,7 +4092,10 @@ namespace DeR4Tizer
                     faire.Children.Add(Etape(k++, Canal.Visible(L.T(lien.Conseil)), string.Format(en ? "advice of the linked alert {0} (service text)" : "conseil de l'alerte liée {0} (texte du service)", Canal.Visible(lien.Regle))));
                 if (inc != null) faire.Children.Add(Etape(k++, string.Format(en ? "Follow the response in the incident ({0})." : "Suivez la réponse dans l'incident ({0}).", VueChainesFluent.EtatIncident(inc)), Canal.Visible(inc.Id)));
                 var fin = new List<UIElement>();
-                if (lien != null && ouvrirAlerte != null) { string id = lien.Id; fin.Add(Bouton(en ? "Open the linked alert" : "Ouvrir l'alerte liée", false, () => ouvrirAlerte(id))); }
+                // La page Alertes n'affiche que les 500 plus récentes : une alerte liée plus ancienne n'y serait pas choisie, c'est dit
+                if (lien != null && ouvrirAlerte != null && VueChainesFluent.AlerteAffichee(lien, alertes)) { string id = lien.Id; fin.Add(Bouton(en ? "Open the linked alert" : "Ouvrir l'alerte liée", false, () => ouvrirAlerte(id))); }
+                else if (lien != null && ouvrirAlerte != null)
+                    faire.Children.Add(Note(string.Format(en ? "The linked alert is older than the {0} most recent alerts shown by the Alerts page: it cannot be opened there." : "L'alerte liée est plus ancienne que les {0} plus récentes affichées par la page Alertes : elle ne peut pas y être ouverte.", VueAlertesFluent.Maximum), 0));
                 fin.Add(Bouton(en ? "Copy the dossier" : "Copier le dossier", false, () => VueReseauFluent.Copier(VueChainesFluent.CopieDossier(c, lien))));
                 faire.Children.Add(Etape(k++, null, null, fin.ToArray()));
             }
