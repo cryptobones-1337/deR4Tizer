@@ -77,6 +77,9 @@ pub struct Etat {
     pub ecoutes: Vec<Ecoute>,
     pub defender: crate::defender::EtatDefender,
     pub chaines: Vec<crate::chaines::Chaine>,
+    /// Vrai si le budget de `chaines` (`chaines::BUDGET_CHAINES`) a fait retirer des signaux, des nœuds ou des chaînes
+    /// (audit de #323, S323-01)
+    pub chaines_tronquees: bool,
     /// Vrai dès que le mode panique n'est pas proprement inactif (actif ou incertain) : « Rétablir Internet » reste offert
     pub panique: bool,
     /// « active », « inactive » ou « incertaine » : compté sur les règles du pare-feu, pas sur le drapeau seul (PR 6.5)
@@ -672,6 +675,15 @@ fn borner(s: &mut String, max: usize) {
     }
 }
 
+/// Entité d'alerte, bornée comme dans `borner_alerte` (160 caractères, début « … » fin, contrôles remplacés) : partagée
+/// avec les chaînes d'etat.json, qui publient ainsi le même texte que l'alerte CHA-001 (prérelecture de #323, D1)
+pub const MAX_ENTITE_ALERTE: usize = 160;
+pub fn entite_bornee(entite: &str) -> String {
+    let mut e = entite.to_string();
+    borner(&mut e, MAX_ENTITE_ALERTE);
+    e
+}
+
 /// Borne les champs d'une alerte (à la création, dans ajouter_alerte_brute, et à la relecture d'alertes.json depuis
 /// l'audit de #94, S94-02 ; à la création, APRÈS les décisions prises sur le
 /// texte entier : MITRE, signal fort, apprentissage ; AVANT tout usage : journal, export, notifications, SIEM,
@@ -686,7 +698,7 @@ pub fn borner_alerte(a: &mut Alerte) {
     borner(&mut a.parent, MAX_CHEMIN_ALERTE);
     // Heure UTC : 20 caractères quand le service la pose
     borner(&mut a.heure_utc, 32);
-    borner(&mut a.entite, 160);
+    a.entite = entite_bornee(&a.entite);
     for s in [&mut a.processus, &mut a.destination, &mut a.conseil] {
         borner(s, MAX_CHAMP_ALERTE);
     }

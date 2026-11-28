@@ -7297,6 +7297,75 @@ fn chaines_publiees_signaux_masques_et_plafond() {
     assert!(c.noeuds[0].signaux[0].raison.contains("SecretSignal") && c.noeuds.len() == 320, "l'original n'est pas touché");
 }
 
+/// Audit de #323, S323-01 : pire cas de l'auditeur (30 chaînes de 300 processus, 20 signaux chacun, champs pleins de
+/// caractères échappés en JSON) : sans budget, des centaines de Mo ; avec, la partie Chaines tient dans
+/// `BUDGET_CHAINES` octets, l'indicateur est levé, les signaux retirés sont comptés et la chaîne la plus scorée garde
+/// ses nœuds
+#[test]
+fn chaines_publiees_budget_pire_cas() {
+    // Guillemets : échappés en JSON (2 octets) ; caractères de contrôle de l'auditeur (6 octets) : même effet, plus lourd en test
+    let x = "\"".repeat(2000);
+    let signal = crate::chaines::SignalChaine { code: x.chars().take(100).collect(), heure: x.chars().take(23).collect(),
+        techniques: vec![x.chars().take(9).collect(); 8], raison: x.chars().take(90).collect(), score: 1 };
+    let noeud = crate::chaines::NoeudChaine { nom: x.chars().take(64).collect(), chemin: x.clone(), ligne_commande: x.chars().take(301).collect(), raisons: x.clone(),
+        signaux: vec![signal; 20], ..Default::default() };
+    let chaines: Vec<crate::chaines::Chaine> = (0..30).map(|i| crate::chaines::Chaine { score: 1000 - i, racine: format!("c{i}"),
+        noeuds: vec![noeud.clone(); 300], ..Default::default() }).collect();
+    let (publiees, tronquees) = crate::moniteur::chaines_publiees_et_troncature(&chaines);
+    let taille = serde_json::to_vec(&publiees).expect("JSON").len();
+    assert!(taille <= crate::chaines::BUDGET_CHAINES, "{taille} octets");
+    assert!(tronquees, "indicateur de troncature");
+    assert_eq!(publiees.first().map(|c| (c.racine.as_str(), c.noeuds.len())), Some(("c0", 300)), "chaîne la plus scorée : ses nœuds gardés");
+    for c in &publiees {
+        assert_eq!(c.noeuds.len() as u32 + c.noeuds_tronques, 300, "{}", c.racine);
+        assert!(!c.noeuds.is_empty(), "tête gardée : {}", c.racine);
+        assert!(c.noeuds.iter().all(|n| n.signaux.len() as u32 + n.signaux_tronques == 20), "{}", c.racine);
+        assert!(c.noeuds.iter().all(|n| n.raisons.chars().count() <= 1001 && n.chemin.chars().count() <= 1025));
+    }
+    // Sans dépassement : rien n'est retiré, l'indicateur reste baissé
+    let (petites, tronquees) = crate::moniteur::chaines_publiees_et_troncature(&chaines[..1].iter().map(|c| crate::chaines::Chaine {
+        noeuds: c.noeuds.iter().take(3).cloned().collect(), ..c.clone() }).collect::<Vec<_>>());
+    assert!(!tronquees && petites[0].noeuds.len() == 3 && petites[0].noeuds[0].signaux.len() == 20);
+}
+
+/// Audit de #323, S323-01 : ordre du budget : signaux d'abord, chaîne la moins scorée et dernier nœud d'abord ; puis
+/// nœuds (la tête gardée, un parent avant ses enfants) ; raisons jointes et chemin publiés coupés, « … » à la fin
+#[test]
+fn chaines_budget_ordre_et_bornes() {
+    use crate::chaines::{appliquer_budget, Chaine, NoeudChaine, SignalChaine};
+    let signal = SignalChaine { raison: "r".repeat(90), ..Default::default() };
+    let noeud = |pid: u32| NoeudChaine { pid, signaux: vec![signal.clone(); 5], ..Default::default() };
+    let chaines: Vec<Chaine> = (0..3).map(|i| Chaine { score: 30 - i, noeuds: (0..4).map(|p| noeud(i as u32 * 10 + p)).collect(),
+        ..Default::default() }).collect();
+    let taille = |c: &Vec<Chaine>| serde_json::to_vec(c).expect("JSON").len();
+    let mut v = chaines.clone();
+    assert!(!appliquer_budget(&mut v, taille(&chaines)), "au budget : rien retiré");
+    // Un peu sous la taille : seuls les signaux du dernier nœud de la dernière chaîne partent
+    let mut v = chaines.clone();
+    assert!(appliquer_budget(&mut v, taille(&chaines) - 10));
+    assert_eq!(v[2].noeuds[3].signaux_tronques, 5);
+    assert!(v[2].noeuds[..3].iter().all(|n| n.signaux.len() == 5) && v[..2].iter().all(|c| c.noeuds.iter().all(|n| n.signaux.len() == 5)));
+    // Budget très bas : tous les signaux partent, puis les nœuds des chaînes les moins scorées, têtes gardées d'abord
+    let mut v = chaines.clone();
+    let sans_signaux: Vec<Chaine> = chaines.iter().map(|c| Chaine { noeuds: c.noeuds.iter().map(|n| NoeudChaine { signaux: vec![],
+        signaux_tronques: 5, ..n.clone() }).collect(), ..c.clone() }).collect();
+    assert!(appliquer_budget(&mut v, taille(&sans_signaux) - 50));
+    assert!(v.iter().all(|c| c.noeuds.iter().all(|n| n.signaux.is_empty())));
+    assert_eq!(v.iter().map(|c| c.noeuds.len()).collect::<Vec<_>>()[..2], [4, 4], "chaînes les plus scorées : nœuds gardés");
+    assert!(v[2].noeuds.len() < 4 && v[2].noeuds.len() as u32 + v[2].noeuds_tronques == 4 && v[2].noeuds[0].pid == 20, "tête gardée");
+    assert!(taille(&v) <= taille(&sans_signaux) - 50);
+    // Bornes des champs déjà publiés
+    assert_eq!(crate::chaines::raisons_publiees(&"a".repeat(1500)).chars().count(), 1001);
+    assert!(crate::chaines::raisons_publiees(&"a".repeat(1500)).ends_with('…'));
+    assert_eq!(crate::chaines::raisons_publiees("court"), "court");
+    let long = Chaine { noeuds: vec![NoeudChaine { chemin: "c".repeat(5000), ..Default::default() }], ..Default::default() };
+    let p = crate::chaines::chaine_publiee(&long, &|_| String::new());
+    assert!(p.noeuds[0].chemin.chars().count() == 1025 && p.noeuds[0].chemin.ends_with('…'));
+    // Raison d'un signal : masquée avant d'être coupée (S323-03) : un secret à cheval sur la coupe ne laisse pas son début
+    let s = crate::chaines::signal_publie("", 1, "", &[], &format!("{} schtasks /rp MotDePasseTresLong", "x".repeat(70)));
+    assert!(!s.raison.contains("MotDe") && s.raison.chars().count() <= 90, "{}", s.raison);
+}
+
 /// A-6-1, contrôle du source : la ligne d'un 4688 passe par `masquer_secrets` avant d'être bornée et mise dans le message ;
 /// tout événement enregistré aussi (point d'entrée unique du SIEM) ; les règles PRC analysent la ligne non masquée
 /// (processus.rs ne masque rien, le masquage vient après la décision, dans borner_alerte)
@@ -7315,7 +7384,9 @@ fn structure_4688_et_siem_masques() {
     let (decisions, bornage) = (brute.find("mitre::enrichir(&mut a)").unwrap(), brute.find("commun::borner_alerte(&mut a)").unwrap());
     assert!(decisions < bornage && brute.find("apprentissage::signature(&a)").unwrap() < bornage, "décisions avant le masquage");
     assert!(bornage < brute.find("crate::export::alerte(&a)").unwrap() && bornage < brute.find("crate::siem::depuis_alerte(&a)").unwrap());
-    assert!(moniteur.contains("chaines: chaines_publiees(&self.chaines)"));
+    // Chaînes d'etat.json : copie masquée et bornée (audit de #323, S323-01 : budget, avec son indicateur)
+    assert!(moniteur.contains("let (chaines, chaines_tronquees) = chaines_publiees_et_troncature(&self.chaines);"));
+    assert!(moniteur.contains("                chaines,\r\n                chaines_tronquees,") || moniteur.contains("                chaines,\n                chaines_tronquees,"));
     assert!(moniteur.contains("ligne_commande: origine.as_ref().and_then(|o| o.ligne_commande.as_deref()).map(commun::masquer_secrets)"));
 }
 

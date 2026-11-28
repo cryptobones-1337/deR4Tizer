@@ -140,7 +140,15 @@ as the service on the channel.
   (`NoeudsTronques`). T-20 also publishes, for the same chains, the reason of each signal (same masked text as
   `Raisons`, 90 characters), creation and end times, the parent PID and the entity of the chain (head path, which can
   contain the account folder, as already in the CHA-001 alerts); nothing that the tree did not already hold, no new
-  collection (`docs/detection/modele-evenement.md`). The SIEM also keeps 400 characters of the command line of each process creation (4688),
+  collection (`docs/detection/modele-evenement.md`). Size: the `Chaines` part of `etat.json` is kept under a 3 MiB
+  budget, signals then processes of the chains with the lowest score removed first, `ChainesTronquees` set (audit of
+  #323, S323-01: before, a built worst case reached 547 MB, read whole by the API); `Raisons` and `Chemin` of the
+  published chains are cut at 1,000 and 1,024 characters. Feedback on detection (audit of #323, S323-02): `Lien` and
+  `Signaux` tell reader accounts, and so any program running under the console account, what the detection sees:
+  why a chain was cut at its head (`pid-reutilise`, `parent-termine`, `parent-service`...) and which rule codes fired
+  on which process. This helps an attacker tune an evasion (check that a reused parent PID cuts the chain, or which
+  command line stops raising a code); it opens no new evasion, since the rule itself is public in the repository and
+  unchanged. Same category as the published blind spots (collections), accepted on the same basis. The SIEM also keeps 400 characters of the command line of each process creation (4688),
   all accounts, 30 days, readable by reader accounts, and the syslog export or the API transmits them. Since the audit
   of 2026-11-23 (A-6-1, fixed in the lab), recognized secrets are masked (`***`) before any storage or publication:
   SIEM, alerts (alertes.json, exports, notifications), chains and connections of `etat.json`; detection analyzes the

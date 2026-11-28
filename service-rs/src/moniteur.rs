@@ -1105,6 +1105,7 @@ impl Moniteur {
             let reponses_auto = etat_reponses_auto(&self.config, commun::echec_protection().is_some(), politique::registre_illisible(registre.0),
                 crate::baseline::etat_audit_fichiers(),
                 crate::menaces::niveau3_charges(&self.partage.menaces.read().unwrap().infos.sources), &collectes::instantane());
+            let (chaines, chaines_tronquees) = chaines_publiees_et_troncature(&self.chaines);
             let _ = commun::ecrire("etat.json", &Etat {
                 mis_a_jour: commun::maintenant(),
                 demarrage: self.demarrage.clone(),
@@ -1119,7 +1120,8 @@ impl Moniteur {
                 outils_distants: s.outils.clone(),
                 ecoutes: s.ecoutes.clone(),
                 defender: self.partage.defender.lock().unwrap().clone(),
-                chaines: chaines_publiees(&self.chaines),
+                chaines,
+                chaines_tronquees,
                 panique: reponse::etat_panique() != reponse::EtatPanique::Inactive,
                 panique_etat: reponse::etat_panique().texte().into(),
                 exposition: self.exposition.clone(),
@@ -2086,18 +2088,26 @@ pub const RELEVES_PARE_FEU_MUET: u32 = 10;
 static NETTOYAGE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Chaînes publiées dans etat.json (30 au plus) : ligne de commande et raisons de chaque nœud secrets masqués (pur, testé ;
 /// audit du 2026-11-23, A-6-1). L'arbre garde la ligne entière : seule la copie publiée est masquée. T-20 : 300 processus
-/// au plus par chaîne (`chaines::chaine_publiee`, heures mises en forme), raison de chaque signal masquée comme `Raisons`
+/// au plus par chaîne (`chaines::chaine_publiee`, heures mises en forme), raison de chaque signal masquée comme `Raisons`.
+/// Audit de #323, S323-01 : raisons jointes bornées à 1000 caractères, budget de `chaines::BUDGET_CHAINES` octets
 pub(crate) fn chaines_publiees(chaines: &[Chaine]) -> Vec<Chaine> {
-    chaines.iter().take(30).map(|c| crate::chaines::chaine_publiee(c, &crate::chaines::heure_locale_ms)).map(|mut c| {
+    chaines_publiees_et_troncature(chaines).0
+}
+
+/// `chaines_publiees`, et vrai si le budget a fait retirer quelque chose (`ChainesTronquees` d'etat.json)
+pub(crate) fn chaines_publiees_et_troncature(chaines: &[Chaine]) -> (Vec<Chaine>, bool) {
+    let mut publiees: Vec<Chaine> = chaines.iter().take(30).map(|c| crate::chaines::chaine_publiee(c, &crate::chaines::heure_locale_ms)).map(|mut c| {
         for n in &mut c.noeuds {
             n.ligne_commande = commun::masquer_secrets(&n.ligne_commande);
-            n.raisons = commun::masquer_secrets(&n.raisons);
+            n.raisons = crate::chaines::raisons_publiees(&commun::masquer_secrets(&n.raisons));
             for s in &mut n.signaux {
                 s.raison = commun::masquer_secrets(&s.raison).chars().take(90).collect();
             }
         }
         c
-    }).collect()
+    }).collect();
+    let tronquees = crate::chaines::appliquer_budget(&mut publiees, crate::chaines::BUDGET_CHAINES);
+    (publiees, tronquees)
 }
 
 /// Compte rendu de la désinstallation dans %SystemRoot%\Temp, nom unique, sans écraser ni suivre de lien (audit de #124,
