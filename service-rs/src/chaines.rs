@@ -398,6 +398,13 @@ struct Processus {
 const LIGNE_GARDEE: usize = 1024;
 const LIGNE_PUBLIEE: usize = 300;
 
+/// Ligne gardée dans l'arbre, qui ne sert qu'à être publiée (aucune détection ne la lit) : secrets masqués sur la ligne
+/// entière, PUIS bornée (prérelecture de #323, A-6-1 : coupée d'abord, une adresse compte:motdepasse@hôte coupée avant le
+/// « @ » n'était plus reconnue). Les coupes suivantes (`LIGNE_PUBLIEE`) ne retirent que du texte déjà masqué
+fn ligne_gardee(ligne: &str) -> String {
+    borner(&commun::masquer_secrets(ligne), LIGNE_GARDEE)
+}
+
 /// Décision pure (testée) : code de comportement d'une chaîne (prérelecture de #255, D1) : codes de ses signaux, triés,
 /// sans doublon ; un signal sans code y entre par le début de sa raison. Jamais les techniques. Long ou non ASCII :
 /// remplacé par le début de son empreinte SHA-256 (même code pour les mêmes signaux, 100 caractères au plus)
@@ -630,7 +637,7 @@ impl Arbre {
             }
             if p.ligne.is_empty() {
                 if let Some(l) = ligne {
-                    p.ligne = borner(l, LIGNE_GARDEE);
+                    p.ligne = ligne_gardee(l);
                 }
             }
         }
@@ -673,7 +680,7 @@ impl Arbre {
             Some(e) if heure.map_or(e.vivant, |h| h < e.naissance) => {}
             _ => {
                 self.processus.insert(pid, Processus {
-                    nom, parent: parent.unwrap_or(0), chemin: chemin.to_string(), ligne: borner(ligne.unwrap_or_default(), LIGNE_GARDEE),
+                    nom, parent: parent.unwrap_or(0), chemin: chemin.to_string(), ligne: ligne_gardee(ligne.unwrap_or_default()),
                     vu: maintenant, vivant: false, naissance: t, exacte: heure.is_some(), par_4688: true, fin: None, du_service: false,
                 });
                 self.signaux.remove(&pid);

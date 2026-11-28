@@ -152,13 +152,19 @@ as the service on the channel.
   all accounts, 30 days, readable by reader accounts, and the syslog export or the API transmits them. Since the audit
   of 2026-11-23 (A-6-1, fixed in the lab), recognized secrets are masked (`***`) before any storage or publication:
   SIEM, alerts (alertes.json, exports, notifications), chains and connections of `etat.json`; detection analyzes the
-  whole line beforehand. Masking follows known patterns: for any tool (`net use`, `net user`, `/pass:`,
+  whole line beforehand. Masking is applied to the whole text before any cut (pre-review of #323): a line cut first
+  (PRC alert line at 300 characters, tree copy of a 4688 at 1,024, process cache at 8,192, scheduled task command at
+  4,096, response event fields at 300) could lose the `@` of an address cut before it, and its password was then
+  published; every cut now only removes text that is already masked, and a cut cannot rebuild a secret (tests
+  `alerte_processus_masque_avant_de_couper`, `copies_bornees_4688_masquees_avant_de_couper`,
+  `chaines_ligne_masquee_avant_de_couper`, `commande_tache_masquee_avant_de_couper`,
+  `evenement_reponse_masque_avant_de_couper`). Masking follows known patterns: for any tool (`net use`, `net user`, `/pass:`,
   `/password:`, `--password`, `-Password`, `-Credential`, `ConvertTo-SecureString`, `PGPASSWORD=` and similar
   variables, `compte:motdepasse@` in an address), and only for the tools that use them this way (`/p` and `/rp` of
   schtasks and of remote Windows tools, `-p` of mysql, psexec, sshpass, 7-Zip and RAR, `-pw` of the PuTTY tools, `-P`
   of sqlcmd, zip and unzip, `-pass` of openssl, `-u` of curl, `-U` of smbclient; list `OPTIONS_PAR_OUTIL`, review of
-  #269: elsewhere `/p` is a flag and `-p` a port). A secret passed in another form, or to a tool absent from the
-  list, stays readable by reader accounts, and the SIEM files written before this version
+  #269: elsewhere `/p` is a flag and `-p` a port). A secret passed in another form (an `Authorization:` header, a
+  `token=` parameter, a bearer token), or to a tool absent from the list, stays readable by reader accounts, and the SIEM files written before this version
   keep their whole lines until they are purged (30 days). The first account seen at the console becomes a reader;
   since A-6-2 (fixed in the lab), the Settings page and the first-run setup summary display the reader accounts and
   what they can read; no command removes a reader yet (to be planned: it would be a new privileged

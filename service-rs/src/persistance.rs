@@ -770,12 +770,15 @@ const ACTION_NON_RECONNUE: &str = "(action non reconnue)";
 /// Dans une commande tronquée : l'empreinte de la commande entière la suit, pour qu'un changement au-delà de la borne se voie (relecture de #106, R2)
 const MARQUE_TRONQUEE: &str = " [tronquée, sha256 ";
 
-fn commande_bornee(s: &str) -> String {
+/// Commande d'une tâche bornée (pure, testée). Tronquée : la partie gardée est prise dans la commande secrets masqués
+/// (prérelecture de #323, A-6-1 : coupée avant d'être masquée avec l'alerte, une adresse compte:motdepasse@hôte coupée
+/// avant le « @ » laissait son mot de passe) ; l'empreinte reste celle de la commande non masquée, qui change avec elle
+pub(crate) fn commande_bornee(s: &str) -> String {
     use sha2::{Digest, Sha256};
     if s.chars().count() <= MAX_COMMANDE_TACHE {
         return s.to_string();
     }
-    let debut: String = s.chars().take(MAX_COMMANDE_TACHE).collect();
+    let debut: String = commun::masquer_secrets(s).chars().take(MAX_COMMANDE_TACHE).collect();
     let empreinte: String = Sha256::digest(s.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
     format!("{debut}{MARQUE_TRONQUEE}{empreinte}]")
 }

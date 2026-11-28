@@ -856,9 +856,9 @@ impl Moniteur {
                 premiere_vue: self.premieres_vues[&cle].clone(),
                 connexions: groupe.len(),
                 parent: origine.as_ref().and_then(|o| o.parent.clone()).or_else(|| liste.get(pid).and_then(|p| liste.get(&p.parent)).map(|p| p.nom.clone())),
-                // Publiée dans etat.json : secrets masqués (audit du 2026-11-23, A-6-1) ; l'indice « ligne suspecte » a lu la
-                // ligne entière plus haut
-                ligne_commande: origine.as_ref().and_then(|o| o.ligne_commande.as_deref()).map(commun::masquer_secrets),
+                // Publiée dans etat.json : secrets masqués (audit du 2026-11-23, A-6-1), sur la ligne entière avant toute
+                // coupe (`ligne_publiee`) ; l'indice « ligne suspecte » a lu la ligne non masquée plus haut
+                ligne_commande: origine.as_ref().and_then(processus::InfoProcessus::ligne_publiee),
                 origine: texte_origine,
             };
 
@@ -2087,7 +2087,8 @@ pub const RELEVES_PARE_FEU_MUET: u32 = 10;
 /// Retrait du mode panique pendant la désinstallation, à échéance
 static NETTOYAGE_PANIQUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Chaînes publiées dans etat.json (30 au plus) : ligne de commande et raisons de chaque nœud secrets masqués (pur, testé ;
-/// audit du 2026-11-23, A-6-1). L'arbre garde la ligne entière : seule la copie publiée est masquée. T-20 : 300 processus
+/// audit du 2026-11-23, A-6-1). La ligne gardée par l'arbre (qui ne sert qu'à être publiée) est déjà masquée avant d'être
+/// coupée (`chaines::ligne_gardee`, prérelecture de #323) ; ce second masquage ne change rien à un texte masqué. T-20 : 300 processus
 /// au plus par chaîne (`chaines::chaine_publiee`, heures mises en forme), raison de chaque signal masquée comme `Raisons`.
 /// Audit de #323, S323-01 : raisons jointes bornées à 1000 caractères, budget de `chaines::BUDGET_CHAINES` octets
 pub(crate) fn chaines_publiees(chaines: &[Chaine]) -> Vec<Chaine> {
