@@ -611,7 +611,7 @@ public class SourceSimulee : RealProxy
             (& $n 1 6120 'cmd' ($w + 'cmd.exe') 4812 'false' '2026-11-23 10:40:57.000' 'suivi' @($sPrc1) '' 8),
             (& $n 2 6344 'powershell' ($w + 'powershell.exe') 6120 'false' '2026-11-23 10:41:09.000' 'suivi' @($sPrc2, $sRes) '' 9),
             (& $n 3 6988 'certutil' ($w + 'certutil.exe') 6344 'false' '' 'suivi' @($sPrc3) '' 5),
-            (& $n 3 7012 'rundll32' ('C:\\Users\\user01\\AppData\\Local\\Temp\\' + ('x' * 30) + '…') 6344 'true' '' 'suivi' @($sPrc3, $sRes) '' 9)) -join ',') + ']}'
+            (& $n 3 7012 'rundll32' ('C:\\Users\\user01\\AppData\\Local\\Temp\\' + ('x' * 989) + '…') 6344 'true' '' 'suivi' @($sPrc3, $sRes) '' 9)) -join ',') + ']}'
     $ps = (1..11 | ForEach-Object { & $n 2 (5000 + 4 * $_) 'powershell' ($w + 'powershell.exe') 4410 ($(if ($_ -eq 11) { 'true' } else { 'false' })) '' 'suivi' @($sPrc2) '' 6 })
     $c2 = '{"Racine":"wscript","Score":14,"Resume":"wscript → cmd → powershell → rundll32","Depuis":"2026-11-23 10:12:04","Identite":"wscript#3920@1db5","Entite":"chaine:wscript#3920@1db5","Noeuds":[' + ((
             @((& $n 0 3920 'wscript' ($w + 'wscript.exe') 2208 'false' '' 'pid-reutilise' @()), (& $n 1 4410 'cmd' ($w + 'cmd.exe') 3920 'true' '' 'suivi-approche' @())) + $ps +
@@ -631,7 +631,16 @@ public class SourceSimulee : RealProxy
     Cas 'T-20 actions : processus terminé sans tuer ni suspendre ; en cours ou service plus ancien (état inconnu) : comme avant' (
         (& $act (& $nd $ch1 6120)) -eq 'quarantaine,isolerProgramme,emplacement,copier' -and (& $act (& $nd $ch1 4812)) -eq 'tuerChaine,suspendre,quarantaine,isolerProgramme,emplacement,copier' -and
         (& $act (& $nd $chA 6120)) -eq 'tuerChaine,suspendre,quarantaine,isolerProgramme,emplacement,copier') "$(& $act (& $nd $ch1 6120)) / $(& $act (& $nd $ch1 4812))"
-    Cas 'T-20 actions : chemin coupé par le service (« … ») : ni quarantaine, ni isolement, ni emplacement ; tuer reste (processus en cours)' ((& $act (& $nd $ch1 7012)) -eq 'tuerChaine,suspendre,copier' -and $vch.GetMethod('CheminCoupe').Invoke($null, @('C:\a…')) -and -not $vch.GetMethod('CheminCoupe').Invoke($null, @('C:\a.exe'))) (& $act (& $nd $ch1 7012))
+    Cas 'T-20 actions : chemin coupé par le service (1 024 points de code puis « … », 1 025 en tout) : ni quarantaine, ni isolement, ni emplacement ; tuer reste (processus en cours)' ((& $act (& $nd $ch1 7012)) -eq 'tuerChaine,suspendre,copier' -and (& $nd $ch1 7012).Chemin.Length -eq 1025) "$(& $act (& $nd $ch1 7012)) ; $((& $nd $ch1 7012).Chemin.Length)"
+    # Prérelecture de #325, D1 : « … » est permis dans un nom de fichier ; seule la coupe du service retire les actions de chemin
+    $noT20 = & $t 'NoeudChaine'
+    $court = & $nouv $noT20 @{ Pid = 200; Nom = 'notes'; Chemin = 'C:\Partage\notes…'; Lien = 'suivi'; Vivant = [Nullable[bool]]$true }
+    $coupe = { param($x) [bool]$vch.GetMethod('CheminCoupe').Invoke($null, @([string]$x)) }
+    $emoji = [char]::ConvertFromUtf32(0x1F600)
+    Cas 'T-20 actions : chemin court qui finit par « … » (nom de fichier permis) garde quarantaine, isolement et emplacement ; 1 024 points de code finissant par « … » non plus coupé' (
+        (& $act $court) -eq 'tuerChaine,suspendre,quarantaine,isolerProgramme,emplacement,copier' -and -not (& $coupe 'C:\a…') -and -not (& $coupe (('x' * 1023) + '…')) -and (& $coupe (('x' * 1024) + '…'))) (& $act $court)
+    Cas 'T-20 actions : longueur comptée en points de code, pas en unités UTF-16 (une paire de substitution compte pour un)' (
+        (& $coupe (('x' * 1023) + $emoji + '…')) -and -not (& $coupe (('x' * 1022) + $emoji + '…'))) "$((('x' * 1022) + $emoji + '…').Length) unités"
 
     # Filtres par type de nœud et compteurs ; filtres d'état non proposés à un service plus ancien (« 0 » serait faux)
     $cpt = { param($c) (0..5 | ForEach-Object { if ($vch.GetMethod('FiltrePropose').Invoke($null, @($c, [int]$_))) { [string]$vch.GetMethod('Compter').Invoke($null, @($c, [int]$_)) } else { '-' } }) -join ',' }
@@ -747,6 +756,18 @@ public class SourceSimulee : RealProxy
     $pA = & $montrer $ancienT20 $false $null
     $txA = (& $textes $pA) -join ' | '
     Cas 'T-20 page, service plus ancien : lisible sans plantage, rien d''affirmé sur l''état, les signaux ou l''alerte' ($txA.Contains('Non liée') -and $txA.Contains('ne dit pas quels processus tournent encore') -and -not $txA.Contains('En cours  ') -and -not $txA.Contains('terminé :')) $txA.Substring(0, [math]::Min(300, $txA.Length))
+    # Prérelecture de #325, D2 : une réécriture d'etat.json qui ne change que l'heure ne reconstruit pas le dossier
+    $pH = & $montrer $etatT20 $false 'p6344'
+    $bandeauAvant = (& $champ $pH 'hoteBandeau').GetValue($pH).Content; $detailAvant = (& $champ $pH 'hoteDetail').GetValue($pH).Content
+    (& $champ $pH 'misAJour').SetValue($pH, '2026-11-23 10:42:35'); [void]$pageCh.GetMethod('Afficher', $tout).Invoke($pH, @())
+    $resumeH = (& $champ $pH 'resume').GetValue($pH).Text
+    Cas 'T-20 rafraîchissement : seule l''heure d''etat.json change, le texte de l''heure suit sans reconstruire le dossier (bandeau et détail gardés)' (
+        [object]::ReferenceEquals($bandeauAvant, (& $champ $pH 'hoteBandeau').GetValue($pH).Content) -and [object]::ReferenceEquals($detailAvant, (& $champ $pH 'hoteDetail').GetValue($pH).Content) -and $resumeH.Contains('10:42:35')) $resumeH
+    # « Ouvrir l'alerte liée » seulement si la page Alertes l'affiche (les 500 plus récentes)
+    $l501 = New-Object "Collections.Generic.List[$($alT.FullName)]"
+    for ($k = 0; $k -le 500; $k++) { $l501.Add((& $nouv $alT @{ Id = "x$k"; Regle = 'CHA-001'; Niveau = 'Alerte' })) }
+    $aff = { param($id) [bool]$vch.GetMethod('AlerteAffichee').Invoke($null, @(($l501 | Where-Object { $_.Id -eq $id } | Select-Object -First 1).PSObject.BaseObject, $l501.PSObject.BaseObject)) }
+    Cas 'T-20 alerte liée : plus ancienne que les 500 plus récentes de la page Alertes, « Ouvrir » non proposé (c''est dit) ; récente, proposé' (-not (& $aff 'x0') -and (& $aff 'x500') -and (& $aff 'x1') -and $fluentSrc.Contains('elle ne peut pas y être ouverte'))
     $pageCh.GetField('vueTexte', $tout).SetValue($null, $false)
     Cas 'T-20 coquille : « Ouvrir l''alerte liée » ouvre la page Alertes sur cette alerte (tous niveaux)' ($fluentSrc.Contains('pageAlertes.Montrer(id)') -and $fluentSrc.Contains('internal void Montrer(string id) { niveau = null; choisie = id; Rafraichir(); }'))
     $guiSrc = [IO.File]::ReadAllText("$src\Gui.cs")
