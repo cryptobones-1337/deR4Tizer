@@ -2550,7 +2550,7 @@ fn chaines_ligne_masquee_avant_de_couper() {
     for pid in [600, 400] {
         let n = publiees.iter().flat_map(|c| &c.noeuds).find(|n| n.pid == pid).expect("nœud publié");
         assert!(!fuite_du_secret(&n.ligne_commande) && n.ligne_commande.starts_with("certutil") && n.ligne_commande.ends_with('…'),
-            "{pid} : {}", n.ligne_commande);
+            "nœud {pid}, {} caractères", n.ligne_commande.chars().count());
     }
 }
 
