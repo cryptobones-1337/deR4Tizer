@@ -642,6 +642,122 @@ public class SourceSimulee : RealProxy
     Cas 'T-4 Trafic (D3) : raisons publiées mais vides, dit tel quel, jamais « version plus ancienne »' ($txtQ3.Contains('Le service ne publie aucune raison pour ce volume') -and -not $txtQ3.Contains('version plus ancienne')) $txtQ3
     $carteSrc = $fluentSrc.Substring($fluentSrc.IndexOf('class CarteFluent'), $fluentSrc.IndexOf('class CourbeFluent') - $fluentSrc.IndexOf('class CarteFluent'))
     Cas 'Trafic : carte sans animation continue ni chargement réseau, contours de l''exécutable' (-not $carteSrc.Contains('DispatcherTimer') -and -not $carteSrc.Contains('http') -and $carteSrc.Contains('PaysCarte.Tous'))
+    # T-19 : carte interactive de la page Trafic (filtre, zoom borné, 20 arcs au plus, champs absents, nom du pays au lieu
+    # du code, clavier) ; données fictives (domaines example.*, adresses RFC 5737)
+    $pvT = & $t 'TraficProgrammePays'; $dpT = & $t 'TraficDestinationPays'; $pcT = & $t 'PaysCarte'; $carteT = & $t 'CarteFluent'; $pageTr = & $t 'PageTraficFluent'
+    $np = [Reflection.BindingFlags]'Instance,NonPublic'
+    $listeDe = { param($type, $items) $l = New-Object "Collections.Generic.List[$($type.FullName)]"; foreach ($i in $items) { $l.Add($i) }; , $l }
+    $chaines = { param($items) $l = New-Object 'Collections.Generic.List[string]'; foreach ($i in $items) { $l.Add([string]$i) }; , $l }
+    $pv = { param($n, $e, $s) & $nouv $pvT @{ Nom = $n; Entrant = [long]$e; Sortant = [long]$s } }
+    $dp = { param($ip, $n, $p, $o) & $nouv $dpT @{ Ip = $ip; Nom = $n; Programme = $p; Entrant = [long]$o; Sortant = [long]0 } }
+    $paysDE = & $nouv $paT @{ Code = 'DE'; Entrant = [long]380MB; Sortant = [long]30MB; Destinations = 41; Programmes = (& $chaines 'msedge.exe', 'svchost.exe', 'Teams.exe'); Active = $true
+        ProgrammesVolumes = (& $listeDe $pvT @((& $pv 'svchost.exe' 90MB 5MB), (& $pv 'msedge.exe' 245MB 15MB), (& $pv 'Teams.exe' 45MB 10MB), (& $pv 'OUTLOOK.EXE' 1MB 0)))
+        DestinationsPrincipales = (& $listeDe $dpT @((& $dp '203.0.113.10' 'static.example.de' 'msedge.exe' 120MB), (& $dp '198.51.100.7' '' 'Teams.exe' 31MB)))
+        DebitEntrantRecent = [long]1MB; DebitSortantRecent = [long]100KB }
+    $paysUS = & $nouv $paT @{ Code = 'US'; Entrant = [long]1900MB; Sortant = [long]210MB; Destinations = 142; Programmes = (& $chaines 'msedge.exe'); Active = $true
+        ProgrammesVolumes = (& $listeDe $pvT @((& $pv 'msedge.exe' 1500MB 100MB))); DestinationsPrincipales = (& $listeDe $dpT @((& $dp '192.0.2.50' 'www.example.com' 'msedge.exe' 420MB)))
+        DebitEntrantRecent = [long]1600KB; DebitSortantRecent = [long]120KB }
+    # Russie : au-delà des 30 pays détaillés (aucun programme avec volume, aucune destination principale), signalée
+    $paysRU = & $nouv $paT @{ Code = 'RU'; Entrant = [long]180KB; Sortant = [long]40KB; Destinations = 1; Programmes = (& $chaines 'rundll32.exe'); Active = $true
+        ProgrammesVolumes = (& $listeDe $pvT @()); DestinationsPrincipales = (& $listeDe $dpT @()); DebitEntrantRecent = [long]2KB }
+    $destT19 = & $listeDe $deT @((& $nouv $deT @{ Ip = '203.0.113.10'; Nom = 'static.example.de'; Pays = 'DE'; Programme = 'msedge.exe'; Port = 443; Entrant = [long]120MB; Sortant = [long]1MB; Active = $true }),
+        (& $nouv $deT @{ Ip = '192.0.2.50'; Nom = 'www.example.com'; Pays = 'US'; Programme = 'msedge.exe'; Port = 443; Entrant = [long]400MB; Sortant = [long]20MB }),
+        (& $nouv $deT @{ Ip = '192.0.2.99'; Pays = ''; Programme = 'svchost.exe'; Port = 53; Entrant = [long]1KB; Sortant = [long]1KB }))
+    $somme = 380MB + 30MB + 1900MB + 210MB + 180KB + 40KB
+    $et19 = & $nouv $etT @{ Pays = (& $listeDe $paT @($paysDE, $paysUS, $paysRU)); Destinations = $destT19; PaysSignales = (& $chaines 'RU'); TotalEntrant = [long]($somme + 5MB); TotalSortant = [long]0; PlagesGeoip = 1000
+        Applications = (& $listeDe $apT @((& $nouv $apT @{ Nom = 'msedge.exe'; Entrant = [long]1600MB; Sortant = [long]110MB; Destinations = 214 }))) }
+    $ligT19 = { param($e, $v, $p) @($vt.GetMethod('LignesFiltrees').Invoke($null, [object[]]@($e, [int]$v, $p))) }
+    $f0 = @(& $ligT19 $et19 0 'DE'); $f1 = @(& $ligT19 $et19 1 'DE'); $f2 = @(& $ligT19 $et19 2 'DE')
+    Cas 'T-19 filtre : programmes du pays avec leur volume dans ce pays, plus gros d''abord ; pays seul ; destinations du pays (liste Destinations puis destinations principales, port non publié dit)' (
+        (($f0 | ForEach-Object { $_.Titre }) -join '|') -eq 'msedge.exe|svchost.exe|Teams.exe|OUTLOOK.EXE' -and $f0[0].Etiquette -eq (& $octets 260MB) -and $f0[0].Sous.Contains('avec Allemagne (DE)') -and
+        @($f0[0].Detail | Where-Object { $_.Titre -eq 'Reçu de ce pays' -and $_.Texte -eq (& $octets 245MB) }).Count -eq 1 -and
+        $f1.Count -eq 1 -and $f1[0].Titre -eq 'Allemagne (DE)' -and $f1[0].Pays -eq 'DE' -and
+        (($f2 | ForEach-Object { $_.Titre }) -join '|') -eq 'static.example.de (203.0.113.10)|198.51.100.7' -and @($f2[1].Detail | Where-Object { $_.Titre -eq 'Port' -and $_.Texte -eq 'non publié pour cette ligne' }).Count -eq 1) ((@($f0) + @($f1) + @($f2) | ForEach-Object { $_.Titre + ' / ' + $_.Sous }) -join ' | ')
+    $sansF = & $ligT19 $et19 2 $null
+    Cas 'T-19 filtre : sans filtre, listes entières (3 destinations, 3 pays) ; pays sans trafic filtré : liste vide' ($sansF.Count -eq 3 -and (& $ligT19 $et19 1 $null).Count -eq 3 -and (& $ligT19 $et19 0 'JP').Count -eq 0)
+    $fRU = & $ligT19 $et19 0 'RU'
+    Cas 'T-19 infobulle sans détail : pays au-delà des 30 détaillés, programmes nommés sans volume, pourquoi dit (jamais « version plus ancienne »)' ($fRU.Count -eq 1 -and $fRU[0].Titre -eq 'rundll32.exe' -and $fRU[0].Sous.Contains('volume non publié') -and (($fRU[0].Detail | ForEach-Object { $_.Texte }) -join '|').Contains('ne détaille que les 30 plus gros pays') -and -not (($fRU[0].Detail | ForEach-Object { $_.Texte }) -join '|').Contains('version plus ancienne')) (($fRU | ForEach-Object { $_.Sous }) -join '|')
+    $bulleT = { param($e, $c, [bool]$f) @($vt.GetMethod('LignesBulle').Invoke($null, [object[]]@($e, [string]$c, $f))) }
+    $bDE = & $bulleT $et19 'DE' $false; $bRU = & $bulleT $et19 'RU' $false; $bJP = & $bulleT $et19 'JP' $false
+    $txtB = { param($b) ($b | ForEach-Object { "$($_.Key):$($_.Value)" }) -join '|' }
+    Cas 'T-19 infobulle : nom, reçu et envoyé, destinations, trois premiers programmes par volume ; clic qui filtre' ((& $txtB $bDE) -eq ("0:Allemagne (DE)|1:↓ " + (& $octets 380MB) + " reçus  ·  ↑ " + (& $octets 30MB) + " envoyés|2:41 destination(s)|2:En ce moment : ↓ 1.0 Mo/s  ↑ 100 Ko/s|2:Principaux programmes : msedge.exe, svchost.exe, Teams.exe|4:Cliquer pour filtrer les listes sur ce pays").Replace('1.0 Mo/s', [string](& $t 'Format').GetMethod('Debit').Invoke($null, @([long]1MB)))) (& $txtB $bDE)
+    Cas 'T-19 infobulle : pays signalé en rouge (renvoi vers Connexions), programmes déjà publiés quand le détail manque ; pays sans échange dit' ((& $txtB $bRU).Contains('2:Principaux programmes : rundll32.exe') -and @($bRU | Where-Object { $_.Key -eq 3 -and $_.Value.Contains('Ouvrir dans Connexions') }).Count -eq 1 -and @($bDE | Where-Object { $_.Key -eq 3 }).Count -eq 0 -and (& $txtB $bJP) -eq '0:Japon (JP)|2:Aucun échange depuis minuit') ((& $txtB $bRU) + ' || ' + (& $txtB $bJP))
+    # Nom localisé du pays dans la vue Destinations (défaut : code brut affiché)
+    $langue.GetField('En').SetValue($null, $true)
+    $sansFEn = & $ligT19 $et19 2 $null
+    $codeHors = @('SG', 'MT', 'BH', 'MV') | Where-Object { -not $pcT.GetProperty('Tous').GetValue($null).ContainsKey($_) } | Select-Object -First 1
+    $nomHors = if ($codeHors) { [string]$vt.GetMethod('NomPays').Invoke($null, @([string]$codeHors)) } else { '' }
+    $langue.GetField('En').SetValue($null, $false)
+    $nomHorsFr = if ($codeHors) { [string]$vt.GetMethod('NomPays').Invoke($null, @([string]$codeHors)) } else { '' }
+    Cas 'T-19 vue Destinations : nom du pays localisé au lieu du code brut (Allemagne, Germany), pays vide dit inconnu ; pays absent de la carte : nom Windows en anglais, code en français' (
+        $sansF[1].Sous.StartsWith('Allemagne (DE)  ·  msedge.exe  ·  port 443') -and $sansFEn[1].Sous.StartsWith('Germany (DE)') -and $sansF[2].Sous.StartsWith('pays inconnu  ·  svchost.exe') -and
+        ($null -eq $codeHors -or ($nomHors -match "^[A-Z][a-z].* \($codeHors\)$" -and $nomHorsFr -eq $codeHors))) "$($sansF[1].Sous) ; $($sansFEn[1].Sous) ; $($sansF[2].Sous) ; $codeHors=$nomHors/$nomHorsFr"
+    # Arcs : 20 au plus, les plus forts débits récents, origine exclue, épaisseur en racine carrée
+    $codes = @($pcT.GetProperty('Tous').GetValue($null).Keys | Where-Object { $_ -ne 'FR' } | Sort-Object | Select-Object -First 30)
+    $i = 0; $tous30 = foreach ($c in $codes) { $i++; & $nouv $paT @{ Code = $c; Entrant = [long](1MB * $i); Sortant = [long]0; Destinations = 1; Active = $true; DebitEntrantRecent = [long](1000 * $i); DebitSortantRecent = [long]0 } }
+    $tous30 += & $nouv $paT @{ Code = 'FR'; Entrant = [long]1GB; Sortant = [long]0; Destinations = 1; Active = $true; DebitEntrantRecent = [long]999999 }
+    $et30 = & $nouv $etT @{ Pays = (& $listeDe $paT $tous30); PaysSignales = (& $chaines $codes[29]) }
+    $arcs = @($vt.GetMethod('Arcs').Invoke($null, [object[]]@($et30, 'FR')))
+    $ep = @($arcs | ForEach-Object { $_.Epaisseur })
+    Cas 'T-19 arcs : 20 au plus, plus forts débits d''abord, jamais vers le pays d''origine, épaisseur 1 à 5 en racine carrée, pays signalé marqué' ($arcs.Count -eq 20 -and $arcs[0].Code -eq $codes[29] -and $arcs[0].Signale -and $arcs[19].Code -eq $codes[10] -and -not ($arcs | Where-Object { $_.Code -eq 'FR' }) -and [math]::Abs($ep[0] - 5) -lt 1e-9 -and [math]::Abs($ep[19] - (1 + 4 * [math]::Sqrt(11 / 30))) -lt 1e-9) "$($arcs.Count) arcs ; $($arcs[0].Code) $($ep[0]) ; $($arcs[19].Code) $($ep[19])"
+    # Service plus ancien : trafic.json sans les champs T-19 (relu par le même désérialiseur que Commun.Lire)
+    $vieux = (& $t 'Commun').GetMethod('Json').Invoke($null, @()).GetType().GetMethod('Deserialize', [type[]]@([string])).MakeGenericMethod($etT).Invoke((& $t 'Commun').GetMethod('Json').Invoke($null, @()), @('{"Pays":[{"Code":"DE","Entrant":1000,"Sortant":10,"Destinations":2,"Programmes":["a.exe"],"Active":true}],"Destinations":[{"Ip":"203.0.113.9","Pays":"DE","Programme":"a.exe","Port":443,"Entrant":1,"Sortant":1,"Active":true}],"TotalEntrant":2000,"PlagesGeoip":5}'))
+    $vAncien = $vt.GetMethod('Ancien').Invoke($null, @($vieux)); $vArcs = @($vt.GetMethod('Arcs').Invoke($null, [object[]]@($vieux, 'FR'))).Count
+    $v0 = & $ligT19 $vieux 0 'DE'; $vDet = (@($vt.GetMethod('DetailPays').Invoke($null, [object[]]@($vieux, 'DE'))) | ForEach-Object { $_.Texte }) -join '|'
+    $vB = & $txtB (& $bulleT $vieux 'DE' $false)
+    $erreurV = $null
+    try {
+        $pv19 = [Activator]::CreateInstance($pageTr, $true); $pageTr.GetField('t', $np).SetValue($pv19, $vieux); $pageTr.GetField('lu', $np).SetValue($pv19, $true)
+        $null = $pageTr.GetMethod('Basculer', $np).Invoke($pv19, @('DE'))
+        $pv19.Measure((New-Object Windows.Size 900, 900)); $pv19.Arrange((New-Object Windows.Rect 0, 0, 900, 900)); $pv19.UpdateLayout()
+        $bmpV = New-Object Windows.Media.Imaging.RenderTargetBitmap 900, 900, 96, 96, ([Windows.Media.PixelFormats]::Pbgra32); $bmpV.Render($pv19)
+    } catch { $erreurV = $_.Exception.ToString() }
+    Cas 'T-19 champs absents (service plus ancien) : aucun arc, programmes sans volume, détail dit non publié par une version plus ancienne, page filtrée rendue sans erreur' ($vAncien -and $vArcs -eq 0 -and $v0.Count -eq 1 -and $v0[0].Sous.Contains('volume non publié') -and $vDet.Contains('version plus ancienne') -and $vB.Contains('Principaux programmes : a.exe') -and $null -eq $erreurV) "ancien=$vAncien arcs=$vArcs ; $vDet ; $erreurV"
+    Cas 'T-19 légende : volume sans pays (total moins la somme des pays)' ([long]$vt.GetMethod('VolumeSansPays').Invoke($null, @($et19)) -eq 5MB -and [long]$vt.GetMethod('VolumeSansPays').Invoke($null, @($vieux)) -eq 990)
+    # Zoom borné de 1 à 12, sans retour automatique
+    $bz = { param($z) [double]$vt.GetMethod('BornerZoom').Invoke($null, @([double]$z)) }
+    $fenT = [Activator]::CreateInstance($coquille, [Reflection.BindingFlags]'Instance,Public,NonPublic', $null, [object[]]@(), $null)
+    $null = $coquille.GetMethod('Ouvrir', $np).Invoke($fenT, @('Trafic'))
+    $zoneT = $coquille.GetField('zone', $np).GetValue($fenT)
+    $pg = $zoneT.Content
+    $pageTr.GetField('t', $np).SetValue($pg, $et19); $pageTr.GetField('lu', $np).SetValue($pg, $true); $null = $pageTr.GetMethod('Afficher', $np).Invoke($pg, @())
+    $carte = $pageTr.GetField('carte', $np).GetValue($pg); $carte.Measure((New-Object Windows.Size 600, 400)); $carte.Arrange((New-Object Windows.Rect 0, 0, 600, 400))
+    1..30 | ForEach-Object { $null = $carteT.GetMethod('Zoomer', $np).Invoke($carte, [object[]]@([double]1.25, $null)) }
+    $zHaut = $carteT.GetProperty('Zoom', $np).GetValue($carte); $bornesHaut = $pageTr.GetField('bornes', $np).GetValue($pg).Text
+    1..30 | ForEach-Object { $null = $carteT.GetMethod('Zoomer', $np).Invoke($carte, [object[]]@([double]0.8, $null)) }
+    $zBas = $carteT.GetProperty('Zoom', $np).GetValue($carte)
+    $null = $carteT.GetMethod('Zoomer', $np).Invoke($carte, [object[]]@([double]4, $null)); $z4 = $carteT.GetProperty('Zoom', $np).GetValue($carte)
+    $null = $carteT.GetMethod('Touche', $np).Invoke($carte, @([Windows.Input.Key]::Home)); $zMonde = $carteT.GetProperty('Zoom', $np).GetValue($carte)
+    Cas 'T-19 zoom : borné de 1 à 12 (molette, boutons, clavier), bornes écrites, gardé tant qu''on ne demande pas la vue monde' ((& $bz 0.2) -eq 1 -and (& $bz 50) -eq 12 -and (& $bz ([double]::NaN)) -eq 1 -and $zHaut -eq 12 -and $bornesHaut -eq '×12  (1 à 12)' -and $zBas -eq 1 -and $z4 -eq 4 -and $zMonde -eq 1 -and [double]$vt.GetMethod('BornerCentre').Invoke($null, @([double]0, [double]1)) -eq 0.5 -and [double]$vt.GetMethod('BornerCentre').Invoke($null, @([double]0, [double]4)) -eq 0.125) "haut $zHaut ($bornesHaut), bas $zBas, ×4 $z4, monde $zMonde"
+    # Filtre de la page : écrit au-dessus des listes, appliqué au panneau de détail, remis à zéro en quittant la page
+    $null = $pageTr.GetMethod('Basculer', $np).Invoke($pg, @('DE'))
+    $barreF = $pageTr.GetField('barreFiltre', $np).GetValue($pg)
+    $texteDe = { param($el) $tx = New-Object Collections.Generic.List[string]; $parcourir = $null; $parcourir = { param($x) if ($x -is [Windows.Controls.TextBlock]) { $tx.Add($x.Text) } elseif ($x -is [Windows.Controls.ContentControl] -and $x.Content -is [string]) { $tx.Add($x.Content) }; foreach ($e in [Windows.LogicalTreeHelper]::GetChildren($x)) { if ($e -is [Windows.DependencyObject]) { & $parcourir $e } } }; & $parcourir $el; ($tx -join '|') }
+    $filtreDe = { $pageTr.GetProperty('Filtre', $np).GetValue($pg) }
+    $txBarre = & $texteDe $barreF; $txDetail = & $texteDe $pageTr.GetField('detail', $np).GetValue($pg); $txListe = & $texteDe $pageTr.GetField('liste', $np).GetValue($pg)
+    $filtreCarte = $carteT.GetProperty('Filtre', $np).GetValue($carte)
+    Cas 'T-19 filtre : clic sur un pays, filtre écrit au-dessus des listes avec sa croix, liste et panneau de détail filtrés (destinations principales du pays), carte filtrée' ((& $filtreDe) -eq 'DE' -and $filtreCarte -eq 'DE' -and $barreF.Visibility -eq 'Visible' -and $txBarre.Contains('Pays : Allemagne (DE)   ✕') -and $txBarre.Contains('Cliquer à nouveau sur Allemagne ou Échap') -and -not $txBarre.Contains('Ouvrir dans Connexions') -and $txListe.StartsWith('Programmes qui échangent avec Allemagne|') -and $txDetail.Contains('Destinations principales dans ce pays') -and $txDetail.Contains('static.example.de (203.0.113.10)') -and $txDetail.Contains('Pays|Allemagne (DE)|Destinations principales dans ce pays')) "$txBarre ;; $txDetail"
+    $null = $pageTr.GetMethod('Basculer', $np).Invoke($pg, @('DE')); $apresSecond = (& $filtreDe)
+    $null = $pageTr.GetMethod('Basculer', $np).Invoke($pg, @('DE'))
+    $pg.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.FrameworkElement]::UnloadedEvent)))
+    Cas 'T-19 filtre : second clic sur le même pays le retire ; remis à zéro en quittant la page' ($null -eq $apresSecond -and $null -eq (& $filtreDe) -and $barreF.Visibility -eq 'Collapsed' -and $null -eq $carteT.GetProperty('Filtre', $np).GetValue($carte)) "second : $apresSecond ; après départ : $((& $filtreDe))"
+    # Clavier : pays avec trafic par volume, Entrée filtre, Échap retire ; onglet Pays qui pilote la carte
+    $ordre = @($vt.GetMethod('PaysClavier').Invoke($null, @($et19))) -join '|'
+    $voisin = { param($c, $s) [string]$vt.GetMethod('Voisin').Invoke($null, [object[]]@((& $chaines 'US', 'DE', 'RU').psobject.BaseObject, $c, [int]$s)) }
+    $touche = { param($k) $null = $carteT.GetMethod('Touche', $np).Invoke($carte, @([Windows.Input.Key]::$k)); [string]$carteT.GetProperty('Clavier', $np).GetValue($carte) }
+    $parcours = @((& $touche 'Right'), (& $touche 'Right'), (& $touche 'Left'), (& $touche 'Left')) -join '|'
+    $null = & $touche 'Enter'; $apresEntree = (& $filtreDe)
+    $null = & $touche 'Escape'; $apresEchap = (& $filtreDe)
+    $pageTr.GetField('vue', $np).SetValue($pg, 1); $pageTr.GetField('choisie', $np).SetValue($pg, 1); $pageTr.GetField('vu', $np).SetValue($pg, $null); $null = $pageTr.GetMethod('Afficher', $np).Invoke($pg, @())
+    $marque = $carteT.GetProperty('Marque', $np).GetValue($carte)
+    Cas 'T-19 clavier : flèches sur les pays avec trafic par volume (en boucle), Entrée filtre, Échap retire ; ligne de l''onglet Pays marquée sur la carte' ($ordre -eq 'US|DE|RU' -and (& $voisin 'RU' 1) -eq 'US' -and (& $voisin $null -1) -eq 'RU' -and $parcours -eq 'US|DE|US|RU' -and $apresEntree -eq 'RU' -and $null -eq $apresEchap -and $marque -eq 'DE') "$ordre ; $parcours ; Entrée $apresEntree ; Échap $apresEchap ; marque $marque"
+    # Pays signalé : lien « Ouvrir dans Connexions » au-dessus des listes, qui ouvre Connexions sur l'onglet Suspectes
+    $null = $pageTr.GetMethod('Basculer', $np).Invoke($pg, @('RU'))
+    $txBarreRU = & $texteDe $barreF
+    $null = $pageTr.GetMethod('OuvrirConnexions', $np).Invoke($pg, @())
+    $pc = $zoneT.Content
+    Cas 'T-19 pays signalé : contour rouge sur la carte, lien « Ouvrir dans Connexions » qui ouvre l''onglet Suspectes' ($txBarreRU.Contains('Ouvrir dans Connexions ›') -and $pc.GetType().Name -eq 'PageConnexionsFluent' -and $pc.GetType().GetProperty('FiltreActuel', $np).GetValue($pc) -eq 1 -and $carteSrc.Contains('new Pen(Jetons.Pinceau(Jetons.Danger), 1.8 / zoom)')) "$txBarreRU ; $($pc.GetType().Name)"
+    $fenT.Close()
     # Blocages, Quarantaine, Menaces (U5a) : résumés honnêtes, textes neutralisés, mêmes commandes, S139-02
     $vb = & $t 'VueBlocagesFluent'; $blT = & $t 'Blocage'
     $lb = New-Object "Collections.Generic.List[$($blT.FullName)]"
