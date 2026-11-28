@@ -159,7 +159,8 @@ pub(crate) enum Lien {
     Suivi,
     /// Parent suivi avec la marge de 10 s (heure du parent approchée)
     SuiviApproche,
-    /// Tête : le parent est une racine (chemin exact de RACINES_CHEMINS, ou PID 0 à 4)
+    /// Tête : le parent est une racine (chemin exact de RACINES_CHEMINS, ou PID 1 à 4 présent dans la table ; PID 0 :
+    /// parent inconnu, `raison_publiee`)
     RacineSysteme,
     /// Tête : PID parent absent de la table
     ParentInconnu,
@@ -198,6 +199,13 @@ pub(crate) fn lien_parent(naissance_parent: u64, parent_ordonne: bool, fin_paren
     } else {
         Lien::ParentTermine
     }
+}
+
+/// Décision pure (testée) : raison publiée d'un arrêt de la remontée. PID parent 0 : aucun parent connu (4688 sans
+/// parent, ou « [System Process] » de la liste) : « parent-inconnu », jamais une racine (prérelecture de #323). La
+/// décision d'arrêt, elle, ne change pas
+pub(crate) fn raison_publiee(parent: u32, raison: Lien) -> Lien {
+    if parent == 0 { Lien::ParentInconnu } else { raison }
 }
 
 /// Décision pure (testée) : la remontée s'arrête-t-elle à ce parent, et pourquoi ? Mêmes tests, dans le même ordre, que
@@ -247,15 +255,75 @@ pub(crate) fn entite_chaine(chemin_tete: &str, identite: &str) -> String {
 }
 
 /// Décision pure (testée) : un signal tel que publié, chaque champ borné (code 100 caractères, heure 23, 8 techniques de
-/// 9 caractères, raison 90)
+/// 9 caractères, raison 90). Raison : secrets masqués avant d'être tronquée (audit de #323, S323-03)
 pub(crate) fn signal_publie(code: &str, score: i32, heure: &str, techniques: &[String], raison: &str) -> SignalChaine {
     SignalChaine {
         code: code.chars().take(CODE_SIGNAL_PUBLIE).collect(),
         score,
         heure: heure.chars().take(HEURE_PUBLIEE).collect(),
         techniques: techniques.iter().take(TECHNIQUES_PUBLIEES).map(|t| t.chars().take(TECHNIQUE_PUBLIEE).collect()).collect(),
-        raison: raison.chars().take(RAISON_PUBLIEE).collect(),
+        raison: commun::masquer_secrets(raison).chars().take(RAISON_PUBLIEE).collect(),
     }
+}
+
+/// Raisons jointes d'un nœud telles que publiées (audit de #323, S323-01) : 1000 caractères au plus, « … » à la fin si
+/// elles sont coupées (le texte dit qu'il manque la suite ; `Signaux` et le score gardent le détail)
+pub(crate) fn raisons_publiees(raisons: &str) -> String {
+    borner(raisons, RAISONS_PUBLIEES)
+}
+
+/// Décision pure (testée ; audit de #323, S323-01) : ramène les chaînes publiées sous `budget` octets de JSON compact
+/// (sérialisation de `commun::ecrire`). Retire d'abord les signaux (chaînes les moins scorées d'abord, dernier nœud
+/// d'abord ; comptés dans `SignauxTronques`), puis les nœuds (même ordre, la tête gardée ; comptés dans
+/// `NoeudsTronques` : un parent reste toujours avant ses enfants), puis en dernier recours les chaînes les moins scorées.
+/// Vrai si quelque chose a été retiré. Les chaînes arrivent triées par score décroissant
+pub(crate) fn appliquer_budget(chaines: &mut Vec<Chaine>, budget: usize) -> bool {
+    fn taille<T: Serialize + ?Sized>(v: &T) -> usize {
+        serde_json::to_vec(v).map(|v| v.len()).unwrap_or(usize::MAX)
+    }
+    let mut total = taille(chaines.as_slice());
+    if total <= budget {
+        return false;
+    }
+    'signaux: for c in chaines.iter_mut().rev() {
+        for n in c.noeuds.iter_mut().rev() {
+            if n.signaux.is_empty() {
+                continue;
+            }
+            let avant = taille(&*n);
+            n.signaux_tronques = n.signaux_tronques.saturating_add(u32::try_from(n.signaux.len()).unwrap_or(u32::MAX));
+            n.signaux.clear();
+            total = total.saturating_sub(avant.saturating_sub(taille(&*n)));
+            if total <= budget {
+                break 'signaux;
+            }
+        }
+    }
+    if total > budget {
+        'noeuds: for c in chaines.iter_mut().rev() {
+            while c.noeuds.len() > 1 {
+                let Some(n) = c.noeuds.pop() else { break };
+                c.noeuds_tronques = c.noeuds_tronques.saturating_add(1);
+                // Le nœud et la virgule qui le précédait
+                total = total.saturating_sub(taille(&n).saturating_add(1));
+                if total <= budget {
+                    break 'noeuds;
+                }
+            }
+        }
+    }
+    // Compte exact (les compteurs ont pu allonger le texte de quelques chiffres) ; au-delà, chaînes les moins scorées
+    while !chaines.is_empty() && taille(chaines.as_slice()) > budget {
+        if let Some(c) = chaines.last_mut() {
+            if c.noeuds.len() > 1 {
+                c.noeuds.pop();
+                c.noeuds_tronques = c.noeuds_tronques.saturating_add(1);
+                continue;
+            }
+        }
+        chaines.pop();
+    }
+    true
 }
 
 /// Décision pure (testée) : heure au millième « AAAA-MM-JJ HH:MM:SS.mmm » à partir de l'heure à la seconde déjà mise en
@@ -274,6 +342,8 @@ pub(crate) fn heure_locale_ms(filetime: u64) -> String {
 /// sans son parent. Heures de création et de fin mises en forme par `heure` (seulement pour ce qui est publié)
 pub(crate) fn chaine_publiee(c: &Chaine, heure: &dyn Fn(u64) -> String) -> Chaine {
     let noeuds: Vec<NoeudChaine> = c.noeuds.iter().take(NOEUDS_PUBLIES).cloned().map(|mut n| {
+        // Chemin publié borné (audit de #323, S323-01) : coupé, il finit par « … » et ne désigne plus un fichier
+        n.chemin = borner(&n.chemin, CHEMIN_PUBLIE);
         n.creation = heure(n.naissance_ft);
         n.fin = n.fin_ft.map(heure).unwrap_or_default();
         n
@@ -294,8 +364,15 @@ const TECHNIQUES_PUBLIEES: usize = 8;
 const TECHNIQUE_PUBLIEE: usize = 9;
 const RAISON_PUBLIEE: usize = 90;
 const NOM_PARENT_PUBLIE: usize = 64;
-/// Identité et entité publiées : au-delà, vides (jamais tronquées : une clé tronquée désignerait une autre chaîne)
+/// Identité publiée : au-delà, vide (jamais tronquée : une clé tronquée désignerait une autre chaîne). L'entité suit la
+/// borne de l'alerte (`commun::entite_bornee`)
 const CLE_PUBLIEE: usize = 300;
+/// Raisons jointes et chemin d'un nœud publiés (audit de #323, S323-01 ; au-delà : coupés, « … » à la fin)
+const RAISONS_PUBLIEES: usize = 1000;
+const CHEMIN_PUBLIE: usize = 1024;
+/// Budget de la partie `Chaines` d'etat.json, en octets de JSON compact (audit de #323, S323-01) : bien au-delà d'un
+/// poste réel (quelques dizaines de Ko), il borne le pire cas (avant : des centaines de Mo possibles)
+pub const BUDGET_CHAINES: usize = 3 * 1024 * 1024;
 
 struct Processus {
     nom: String,
@@ -683,7 +760,7 @@ impl Arbre {
             let lien = pp.map(|pp| lien_parent(pp.naissance, pp.exacte || pp.par_4688, pp.fin, p.naissance));
             let parent_racine = pp.is_some_and(|pp| racine(&pp.chemin, &windows));
             if let Some(raison) = arret_remontee(lien, parent == service, parent_racine, vus.contains(&parent), parent <= 4, chemin.len()) {
-                arret = raison;
+                arret = raison_publiee(parent, raison);
                 break;
             }
             vus.insert(parent);
@@ -789,10 +866,12 @@ impl Arbre {
                     .map(|c| c.iter().map(|&p| self.nom(p)).collect::<Vec<_>>().join(" → "))
                     .unwrap_or_default();
                 let mut c = Chaine { racine: self.nom(racine), score, resume, depuis, noeuds, ..Default::default() };
-                // T-20 : identité et entité, mêmes calculs que l'alerte (une clé trop longue n'est pas publiée, jamais tronquée)
+                // T-20 : identité et entité, mêmes calculs que l'alerte. Entité : bornée comme celle de l'alerte CHA-001
+                // (`commun::entite_bornee`, appelée par `borner_alerte`), donc le même texte (prérelecture de #323, D1) ;
+                // identité trop longue : pas publiée, jamais tronquée
                 let identite = self.identite(&c);
                 let entite = entite_chaine(c.noeuds.first().map(|n| n.chemin.as_str()).unwrap_or_default(), &identite);
-                c.entite = if entite.chars().count() <= CLE_PUBLIEE { entite } else { String::new() };
+                c.entite = commun::entite_bornee(&entite);
                 c.identite = if identite.chars().count() <= CLE_PUBLIEE { identite } else { String::new() };
                 c
             })

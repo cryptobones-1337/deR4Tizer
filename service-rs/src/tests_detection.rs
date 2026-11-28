@@ -1648,6 +1648,68 @@ fn t20_lien_de_la_tete() {
     assert_eq!(tete(&c[0]), (1008, "profondeur-max".to_string(), 1007, "p7".to_string()));
 }
 
+/// Prérelecture de #323, D2 : câblage d'`arret_remontee` dans la remontée, au niveau d'`Arbre::chaines` (la règle de
+/// détection) : boucle de PID A ↔ B aux heures approchées (la chaîne s'arrête, tête « pid-reutilise ») ; parent PID 4
+/// présent dans la liste (tête « racine-systeme », nommée) ; PID parent 0 (« parent-inconnu », jamais une racine) ;
+/// deux remontées vers la même tête avec deux raisons (profondeur et boucle) : la plus petite, « pid-reutilise »
+#[test]
+fn t20_cablage_de_la_remontee() {
+    let tete = |c: &crate::chaines::Chaine| (c.noeuds[0].pid, c.noeuds[0].lien.clone(), c.noeuds[0].parent_pid, c.noeuds[0].parent_nom.clone());
+    // Boucle : 500 a pour parent 600, 600 a pour parent 500 ; signal sur 700, enfant de 500
+    let mut arbre = arbre_avec_chemins(&[(500, "a", 600), (600, "b", 500), (700, "c", 500)], &[]);
+    arbre.signaler(700, 5, "x");
+    let c = arbre.chaines();
+    assert_eq!(c.len(), 1);
+    assert_eq!(c[0].noeuds.iter().map(|n| n.pid).collect::<Vec<_>>(), [600, 500, 700], "boucle coupée au PID déjà vu");
+    assert_eq!(tete(&c[0]), (600, "pid-reutilise".to_string(), 500, String::new()));
+    // Parent PID 4 (System) présent dans la liste : racine
+    let mut arbre = arbre_avec_chemins(&[(4, "System", 0), (300, "cmd", 4)], &[]);
+    arbre.signaler(300, 5, "x");
+    let c = arbre.chaines();
+    assert_eq!(c.iter().map(|c| c.noeuds.len()).collect::<Vec<_>>(), [1], "PID 4 n'entre pas dans la chaîne");
+    assert_eq!(tete(&c[0]), (300, "racine-systeme".to_string(), 4, "System".to_string()));
+    // PID parent 0 (4688 sans parent ; « [System Process] » dans la liste) : arrêt, publié « parent-inconnu »
+    let mut arbre = arbre_avec_chemins(&[(0, "[System Process]", 0)], &[]);
+    arbre.creation(300, None, r"C:\P\outil.exe", None);
+    arbre.signaler(300, 5, "x");
+    let c = arbre.chaines();
+    assert_eq!(c.iter().map(|c| c.noeuds.len()).collect::<Vec<_>>(), [1]);
+    assert_eq!(tete(&c[0]), (300, "parent-inconnu".to_string(), 0, String::new()));
+    assert_eq!(crate::chaines::raison_publiee(0, crate::chaines::Lien::RacineSysteme), crate::chaines::Lien::ParentInconnu);
+    assert_eq!(crate::chaines::raison_publiee(4, crate::chaines::Lien::RacineSysteme), crate::chaines::Lien::RacineSysteme);
+    // Même tête, deux raisons : H (1000) et G (1001) parents l'un de l'autre ; 31 générations sous H (1100 à 1130).
+    // Depuis 1130 : 32 processus à H, arrêt par la profondeur ; depuis G : H puis G déjà vu, arrêt par la boucle
+    let mut liste: Vec<(u32, &str, u32)> = vec![(1000, "h", 1001), (1001, "g", 1000), (1100, "k", 1000)];
+    for i in 1..31u32 {
+        liste.push((1100 + i, "k", 1099 + i));
+    }
+    let mut arbre = arbre_avec_chemins(&liste, &[]);
+    arbre.signaler(1130, 5, "x");
+    arbre.signaler(1001, 5, "y");
+    let c = arbre.chaines();
+    assert_eq!(c.len(), 1, "une seule tête");
+    assert_eq!(tete(&c[0]), (1000, "pid-reutilise".to_string(), 1001, String::new()), "la plus petite raison, quel que soit l'ordre");
+}
+
+/// Prérelecture de #323, D1 : l'entité publiée est celle de l'alerte CHA-001 APRÈS `borner_alerte` (160 caractères,
+/// début « … » fin), même pour un chemin de tête de plus de 160 caractères
+#[test]
+fn t20_entite_egale_a_l_alerte_bornee() {
+    let explorateur = format!(r"{}\explorer.exe", crate::natif::dossier_windows());
+    let mut arbre = arbre_avec_chemins(&[(100, "explorer", 4), (200, "outil", 100), (300, "pwsh", 200), (400, "certutil", 300)],
+        &[(100, &explorateur)]);
+    let chemin = format!(r"C:\{}\outil.exe", "d".repeat(190));
+    arbre.completer(200, &chemin, None);
+    arbre.signaler(300, 5, "a");
+    arbre.signaler(400, 7, "b");
+    let c = arbre.chaines();
+    let mut a = arbre.alertes(&c);
+    assert_eq!(a.len(), 1);
+    crate::commun::borner_alerte(&mut a[0]);
+    assert_eq!(c[0].entite, a[0].entite);
+    assert!(c[0].entite.contains(" … ") && c[0].entite.chars().count() <= crate::commun::MAX_ENTITE_ALERTE + 3, "{}", c[0].entite);
+}
+
 /// Signaux publiés bornés : 20 par processus puis compteur, code 100 caractères, 8 techniques de 9 caractères, raison 90.
 /// Le score et les raisons jointes (détection, vue texte) restent ceux de tous les signaux
 #[test]

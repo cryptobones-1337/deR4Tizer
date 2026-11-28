@@ -380,8 +380,12 @@ Per process (`Chaines[].Noeuds[]`):
 | `Fin` | text | same format as `Creation`; empty if the process was not seen ended. Upper bound only: the time of the first process list where it was missing, not the time it ended | `Processus.fin` |
 | `Lien` | text, closed code (16 characters at most) | see below | decision already taken by the walk up the tree |
 | `ParentNom` | text (64 characters at most) | head of the chain only (empty elsewhere): name of the parent when the entry of the tree for that PID is the process that was alive when the head was created (`racine-systeme`, `parent-service`, `profondeur-max`); empty for `parent-inconnu`, `pid-reutilise` and `parent-termine`, where the name in the tree would be that of another program (`chaines::nom_parent_publie`) | `Processus.nom` of the parent PID |
-| `Signaux` | list of `{ Code, Score, Heure, Techniques, Raison }` | the first 20 signals of the process, in the order they were attached; `Code` "RULE#behaviour" (empty for a signal set without a code), 100 characters at most; `Score` integer; `Heure` local time "YYYY-MM-DD HH:MM:SS" of the attachment of the signal to the tree (monitor cycle of 3 s), not the exact time of the original event; `Techniques` ATT&CK identifiers, 8 at most, 9 characters each at most; `Raison` same text as in `Raisons`, secrets masked in the published copy (`commun::masquer_secrets`, like `Raisons`), 90 characters at most | `Arbre.signaux` (`Signal`) |
-| `SignauxTronques` | integer | signals of the process beyond the 20 published (they still count in `Score` and appear in `Raisons`) | |
+| `Signaux` | list of `{ Code, Score, Heure, Techniques, Raison }` | the first 20 signals of the process, in the order they were attached; `Code` "RULE#behaviour" (empty for a signal set without a code), 100 characters at most; `Score` integer; `Heure` local time "YYYY-MM-DD HH:MM:SS" of the attachment of the signal to the tree (monitor cycle of 3 s), not the exact time of the original event; `Techniques` ATT&CK identifiers, 8 at most, 9 characters each at most; `Raison` same text as in `Raisons`, secrets masked (`commun::masquer_secrets`, like `Raisons`) before it is cut to 90 characters | `Arbre.signaux` (`Signal`) |
+| `SignauxTronques` | integer | signals of the process not published: beyond the 20, or removed by the byte budget below (they still count in `Score`) | |
+
+Existing fields now bounded in the published copy (audit of #323, S323-01): `Raisons` 1,000 characters and `Chemin`
+1,024 characters; beyond, they are cut and end with "…" (a cut path no longer designates a file: the interface must
+not offer an action on the path of such a process). `LigneCommande` keeps its 300 characters.
 
 `Lien` codes (`chaines::Lien`):
 
@@ -389,8 +393,8 @@ Per process (`Chaines[].Noeuds[]`):
 |---|---|
 | `suivi` | parent followed, times ordered (exact time or order of the 4688 events) |
 | `suivi-approche` | parent followed with the 10 s margin: the parent was first seen by the process list, its 4688 is missing, so its creation time is approximate (`MARGE_PARENT_APPROCHE`) |
-| `racine-systeme` | head: the parent is a root of the chains by exact path (`RACINES_CHEMINS`, for example explorer.exe in the Windows folder), or PID 0 to 4 |
-| `parent-inconnu` | head: the parent PID is absent from the tree (older than one hour, before the service started, or never seen) |
+| `racine-systeme` | head: the parent is a root of the chains by exact path (`RACINES_CHEMINS`, for example explorer.exe in the Windows folder), or a PID 1 to 4 present in the tree (System) |
+| `parent-inconnu` | head: the parent PID is absent from the tree (older than one hour, before the service started, or never seen), or is 0 (a 4688 without a parent, or "[System Process]" of the process list: no parent known, never a root; `chaines::raison_publiee`) |
 | `pid-reutilise` | head: the process that holds this PID was created after the child (also a loop in the parent PIDs, which can only come from a reused PID) |
 | `parent-termine` | head: the entry of this PID was seen ended before the child was created |
 | `parent-service` | head: the parent is the deR4Tizer service (the head already carries the signal `CHA-001#parent-service`, T1134.004) |
@@ -401,14 +405,26 @@ Per chain (`Chaines[]`):
 | Field | Type | Values and bounds | From |
 |---|---|---|---|
 | `Identite` | text (300 characters at most, empty beyond) | "name#pid@creation time in hexadecimal FILETIME" of the head: stable while the chain grows or its oldest signal expires | `Arbre::identite`, already used for the CHA-001 ceiling and the entity |
-| `Entite` | text (300 characters at most, empty beyond: never truncated, a truncated key would designate another chain) | same text as the `Entite` of the CHA-001 alert of this chain (`chaines::entite_chaine`, shared with `Arbre::alertes`): `programme:<path of the head>`, or `chaine:<Identite>` when the path is missing or designates an interpreter or a generic launcher; the incident page compares entities case-insensitively. Personal data: the path can contain the name of the account folder (`C:\Users\<name>\…`); the same text is already published in the CHA-001 alerts | `Arbre::alertes` (T-3) |
-| `NoeudsTronques` | integer | processes of the chain beyond the 300 published (`NOEUDS_PUBLIES`) | |
+| `Entite` | text (160 characters at most plus " … ": beyond, the start and the end with " … " between them, control characters replaced by "?", exactly as the alert, through the shared `commun::entite_bornee` called by `commun::borner_alerte`) | same text as the `Entite` of the CHA-001 alert of this chain as written to `alertes.json` (`chaines::entite_chaine`, shared with `Arbre::alertes`): `programme:<path of the head>`, or `chaine:<Identite>` when the path is missing or designates an interpreter or a generic launcher; the incident page compares entities case-insensitively. Personal data: the path can contain the name of the account folder (`C:\Users\<name>\…`); the same text is already published in the CHA-001 alerts | `Arbre::alertes` (T-3) |
+| `NoeudsTronques` | integer | processes of the chain not published: beyond the 300 (`NOEUDS_PUBLIES`), or removed by the byte budget below | |
+
+At the top of `etat.json`: `ChainesTronquees` (boolean): true when the byte budget removed signals, processes or
+chains from this write.
 
 Bounds of the whole: 30 chains at most (existing), 300 processes per published chain (new: before, a chain could
 publish hundreds of processes during one hour), 20 signals per process. The published order puts a parent before its
 children, so the 300 published processes never include a process without its parent
 (`chaines::chaine_publiee`). The chain kept in memory for detection keeps all its processes. Added weight: about
 160 bytes per process (fields above without signals) and about 200 bytes per signal.
+
+Byte budget (audit of #323, S323-01): the `Chaines` part of `etat.json` is kept under 3 MiB of compact JSON
+(`chaines::BUDGET_CHAINES`, `chaines::appliquer_budget`). Before it, a worst case built by the auditor (30 chains of
+300 processes, 25 signals each, fields full of characters escaped by JSON) gave a 547 MB `etat.json`, read whole by the
+API. When the budget is exceeded, the service removes, in this order: the signals (chains with the lowest score first,
+last process first; counted in `SignauxTronques`), then the processes (same order, the head of each chain kept, a parent
+always before its children; counted in `NoeudsTronques`), then, as a last resort, the chains with the lowest score;
+`ChainesTronquees` is then true. A real computer stays far below (a few tens of KB), so in practice nothing is
+removed. Tests: `chaines_publiees_budget_pire_cas` (worst case under the budget), `chaines_budget_ordre_et_bornes`.
 
 Limits (from the mock-up file):
 - The nodes of a chain are only the ancestors of the processes that carry a signal: their siblings without a signal
