@@ -1442,6 +1442,283 @@ fn t1_creation_heures_exactes() {
     assert_eq!(arbre.chaines()[0].noeuds.last().map(|n| n.nom.clone()), Some("pwsh".into()), "4688 en retard d'un ancien processus ignoré");
 }
 
+// ------------------------------------------------------------ CHA : dossier d'analyse publié (T-20, étape 1)
+// Champs ajoutés aux chaînes d'etat.json, en lecture seule, tirés de ce que l'arbre sait déjà (maquette et liste validées
+// le 2026-11-28). La détection n'est pas touchée : les tests CHA-001 et T-1 ci-dessus sont inchangés ; les décisions
+// d'arrêt de la remontée sont découpées en raisons sans changer la règle (équivalence exhaustive ci-dessous)
+
+/// `lien_parent` découpe `parent_vivait` sans le changer : suivi exactement quand le parent vivait ; « suivi » si l'heure
+/// du parent est ordonnée (4688), « suivi-approche » sinon ; sinon PID repris (né après l'enfant, marge comprise) ou
+/// parent vu terminé avant la création de l'enfant
+#[test]
+fn t20_lien_parent_decoupe_parent_vivait() {
+    use crate::chaines::{lien_parent, parent_vivait, Lien};
+    let t = 1_000_000_000u64;
+    let marge = 100_000_000u64;
+    for np in [0, t - 1, t, t + 1, t + marge, t + marge + 1, u64::MAX] {
+        for ordonne in [true, false] {
+            for fin in [None, Some(0), Some(t - 1), Some(t), Some(t + 1), Some(u64::MAX)] {
+                for ne in [0, t, u64::MAX] {
+                    let l = lien_parent(np, ordonne, fin, ne);
+                    let suivi = matches!(l, Lien::Suivi | Lien::SuiviApproche);
+                    assert_eq!(suivi, parent_vivait(np, ordonne, fin, ne), "{np} {ordonne} {fin:?} {ne} : {l:?}");
+                    if suivi {
+                        assert_eq!(l == Lien::Suivi, ordonne, "{l:?}");
+                    } else {
+                        assert!(matches!(l, Lien::PidReutilise | Lien::ParentTermine), "{l:?}");
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(lien_parent(t, true, None, t), Lien::Suivi);
+    assert_eq!(lien_parent(t + marge, false, None, t), Lien::SuiviApproche);
+    assert_eq!(lien_parent(t + 1, true, None, t), Lien::PidReutilise);
+    assert_eq!(lien_parent(t + marge + 1, false, None, t), Lien::PidReutilise);
+    assert_eq!(lien_parent(t, true, Some(t + 5), t + 6), Lien::ParentTermine);
+    assert_eq!(lien_parent(t + 1, true, Some(t - 1), t), Lien::PidReutilise, "né après et terminé avant : PID repris d'abord");
+    let codes: Vec<&str> = [Lien::Suivi, Lien::SuiviApproche, Lien::RacineSysteme, Lien::ParentInconnu, Lien::PidReutilise,
+        Lien::ParentTermine, Lien::ParentService, Lien::ProfondeurMax].iter().map(|l| l.code()).collect();
+    assert_eq!(codes, ["suivi", "suivi-approche", "racine-systeme", "parent-inconnu", "pid-reutilise", "parent-termine", "parent-service",
+        "profondeur-max"]);
+    assert!(codes.iter().all(|c| c.len() <= 16 && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')));
+}
+
+/// `arret_remontee` prend exactement les décisions de l'ancienne boucle d'`ascendance` (arrêt si parent absent, s'il ne
+/// vivait pas, s'il est le service, une racine par chemin, déjà vu, PID 0 à 4, ou profondeur 32), sur toutes les
+/// combinaisons ; la raison suit l'ordre des tests
+#[test]
+fn t20_arret_remontee_meme_regle() {
+    use crate::chaines::{arret_remontee, Lien};
+    let liens = [None, Some(Lien::Suivi), Some(Lien::SuiviApproche), Some(Lien::PidReutilise), Some(Lien::ParentTermine)];
+    for lien in liens {
+        for service in [false, true] {
+            for racine in [false, true] {
+                for vu in [false, true] {
+                    for systeme in [false, true] {
+                        for longueur in [0, 1, 31, 32, 33] {
+                            let vivait = matches!(lien, Some(Lien::Suivi | Lien::SuiviApproche));
+                            let ancienne = lien.is_none() || !vivait || service || racine || vu || systeme || longueur >= 32;
+                            assert_eq!(arret_remontee(lien, service, racine, vu, systeme, longueur).is_some(), ancienne,
+                                "{lien:?} {service} {racine} {vu} {systeme} {longueur}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(arret_remontee(None, true, true, true, true, 40), Some(Lien::ParentInconnu));
+    assert_eq!(arret_remontee(Some(Lien::ParentTermine), true, true, true, true, 40), Some(Lien::ParentTermine));
+    assert_eq!(arret_remontee(Some(Lien::PidReutilise), true, true, true, true, 40), Some(Lien::PidReutilise));
+    assert_eq!(arret_remontee(Some(Lien::Suivi), true, true, true, true, 40), Some(Lien::ParentService));
+    assert_eq!(arret_remontee(Some(Lien::Suivi), false, true, true, true, 40), Some(Lien::RacineSysteme));
+    assert_eq!(arret_remontee(Some(Lien::SuiviApproche), false, false, true, true, 40), Some(Lien::PidReutilise), "boucle de PID");
+    assert_eq!(arret_remontee(Some(Lien::Suivi), false, false, false, true, 40), Some(Lien::RacineSysteme), "PID 0 à 4");
+    assert_eq!(arret_remontee(Some(Lien::Suivi), false, false, false, false, 32), Some(Lien::ProfondeurMax));
+    assert_eq!(arret_remontee(Some(Lien::Suivi), false, false, false, false, 31), None);
+}
+
+/// Nom du parent publié pour la tête : seulement quand l'entrée de la table est le processus qui vivait à sa création ;
+/// borné à 64 caractères
+#[test]
+fn t20_nom_du_parent_publie() {
+    use crate::chaines::{nom_parent_publie, Lien};
+    for (lien, attendu) in [(Lien::RacineSysteme, "explorer"), (Lien::ParentService, "explorer"), (Lien::ProfondeurMax, "explorer"),
+        (Lien::PidReutilise, ""), (Lien::ParentTermine, ""), (Lien::ParentInconnu, ""), (Lien::Suivi, ""), (Lien::SuiviApproche, "")] {
+        assert_eq!(nom_parent_publie(lien, Some("explorer")), attendu, "{lien:?}");
+        assert_eq!(nom_parent_publie(lien, None), "", "{lien:?}");
+    }
+    assert_eq!(nom_parent_publie(Lien::RacineSysteme, Some(&"é".repeat(100))).chars().count(), 64);
+}
+
+/// Heures publiées au millième ; heure illisible : vide. Entité d'une chaîne : même règle que l'alerte (T-3)
+#[test]
+fn t20_heure_au_millieme_et_entite() {
+    use crate::chaines::{entite_chaine, heure_au_millieme};
+    assert_eq!(heure_au_millieme("2026-11-28 10:40:52", 134_000_000_001_234_567), "2026-11-28 10:40:52.123");
+    assert_eq!(heure_au_millieme("2026-11-28 10:40:52", 134_000_000_000_009_999), "2026-11-28 10:40:52.000");
+    assert_eq!(heure_au_millieme("", 134_000_000_001_234_567), "");
+    assert_eq!(crate::chaines::heure_locale_ms(134_000_000_001_234_567).len(), 23);
+    assert_eq!(entite_chaine(r" C:\O\outil.exe ", "outil#200@1"), r"programme:C:\O\outil.exe");
+    assert_eq!(entite_chaine(r"C:\W\System32\cmd.exe", "cmd#200@1"), "chaine:cmd#200@1");
+    assert_eq!(entite_chaine("", "PID 7#7@0"), "chaine:PID 7#7@0");
+}
+
+fn liste_t20(processus: &[(u32, &str, u32)]) -> std::collections::HashMap<u32, crate::natif::InfoListe> {
+    processus.iter().map(|&(pid, nom, parent)| (pid, crate::natif::InfoListe { nom: nom.into(), parent })).collect()
+}
+
+/// Champs publiés par processus et par chaîne sur une chaîne aux heures exactes : explorer (racine) → WINWORD → cmd →
+/// pwsh ; pwsh terminé (borne haute de fin), les autres vivants ; signaux avec code, score, heure et techniques ; identité
+/// et entité égales à celles de l'alerte CHA-001. Chaîne vue par la liste seulement : liens « suivi-approche »
+#[test]
+fn t20_champs_publies_par_noeud() {
+    let explorateur = format!(r"{}\explorer.exe", crate::natif::dossier_windows());
+    let t = 134_000_000_000_000_000u64;
+    let mut arbre = crate::chaines::Arbre::default();
+    arbre.fixer_pid_service(PID_SERVICE_ESSAI);
+    arbre.creation_a(100, Some(4), &explorateur, None, Some(t));
+    arbre.creation_a(200, Some(100), r"C:\O\WINWORD.exe", Some("winword /q"), Some(t + 10));
+    arbre.creation_a(300, Some(200), r"C:\W\System32\cmd.exe", None, Some(t + 20));
+    arbre.creation_a(400, Some(300), r"C:\P\pwsh.exe", None, Some(t + 30));
+    let vivants = liste_t20(&[(100, "explorer", 4), (200, "WINWORD", 100), (300, "cmd", 200)]);
+    arbre.maj_avec(&vivants, &|_| String::new());
+    arbre.maj_avec(&vivants, &|_| String::new());
+    arbre.signaler_code(300, 5, "document qui lance un interpréteur", &["T1204.002".to_string()], "PRC-001#document");
+    arbre.signaler_code(400, 7, "PowerShell obscurci", &["T1059.001".to_string(), "T1027".to_string()], "PRC-002#PRC-002:obscurci");
+    let chaines = arbre.chaines();
+    assert_eq!(chaines.len(), 1);
+    let c = &chaines[0];
+    assert_eq!(c.noeuds.iter().map(|n| n.pid).collect::<Vec<_>>(), [200, 300, 400]);
+    let (tete, cmd, pwsh) = (&c.noeuds[0], &c.noeuds[1], &c.noeuds[2]);
+    assert_eq!((tete.lien.as_str(), tete.parent_pid, tete.parent_nom.as_str()), ("racine-systeme", 100, "explorer"));
+    assert_eq!((cmd.lien.as_str(), cmd.parent_pid, cmd.parent_nom.as_str()), ("suivi", 200, ""), "parent nommé pour la tête seulement");
+    assert_eq!((pwsh.lien.as_str(), pwsh.parent_pid), ("suivi", 300));
+    assert!(tete.creation_exacte && cmd.creation_exacte && pwsh.creation_exacte);
+    assert_eq!((tete.vivant, cmd.vivant, pwsh.vivant), (true, true, false));
+    assert_eq!((tete.fin_ft, cmd.fin_ft.is_some(), pwsh.fin_ft.is_some()), (None, false, true));
+    assert_eq!((tete.naissance_ft, pwsh.naissance_ft), (t + 10, t + 30));
+    assert!(tete.creation.is_empty() && pwsh.fin.is_empty(), "heures mises en forme pour la copie publiée seulement");
+    assert!(tete.signaux.is_empty() && tete.signaux_tronques == 0);
+    let s = &pwsh.signaux[0];
+    assert_eq!((s.code.as_str(), s.score, s.raison.as_str()), ("PRC-002#PRC-002:obscurci", 7, "PowerShell obscurci"));
+    assert_eq!(s.techniques, ["T1059.001", "T1027"]);
+    assert_eq!(s.heure.len(), 19, "heure du rattachement : {}", s.heure);
+    assert_eq!(cmd.signaux[0].code, "PRC-001#document");
+    assert_eq!(c.identite, format!("WINWORD#200@{:x}", t + 10));
+    assert_eq!(c.entite, r"programme:C:\O\WINWORD.exe");
+    let a = arbre.alertes(&chaines);
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0].entite, c.entite, "même entité que l'alerte CHA-001");
+    // Copie publiée : heures mises en forme ; fin vide pour un processus vivant
+    let p = crate::chaines::chaine_publiee(c, &|ft| format!("h{ft}"));
+    let attendue = format!("h{}", t + 10);
+    assert_eq!((p.noeuds[0].creation.as_str(), p.noeuds[0].fin.as_str()), (attendue.as_str(), ""));
+    assert!(p.noeuds[2].fin.starts_with('h') && p.noeuds_tronques == 0);
+    assert_eq!((p.identite.as_str(), p.entite.as_str(), p.score), (c.identite.as_str(), c.entite.as_str(), c.score));
+    // Vue par la liste seulement (heures approchées) : parent suivi avec la marge
+    let mut liste = arbre_de_test();
+    liste.signaler(300, 5, "a");
+    liste.signaler(400, 7, "b");
+    let c = &liste.chaines()[0];
+    assert_eq!(c.noeuds.iter().map(|n| (n.pid, n.lien.as_str(), n.creation_exacte, n.vivant)).collect::<Vec<_>>(),
+        [(200, "racine-systeme", false, true), (300, "suivi-approche", false, true), (400, "suivi-approche", false, true)]);
+}
+
+/// Lien de la tête quand son parent n'est pas suivi : PID repris (parent né après), parent terminé avant, parent absent
+/// de la table, service de deR4Tizer (parent usurpé), profondeur maximale ; nom du parent seulement quand il est sûr
+#[test]
+fn t20_lien_de_la_tete() {
+    let tete = |c: &crate::chaines::Chaine| (c.noeuds[0].pid, c.noeuds[0].lien.clone(), c.noeuds[0].parent_pid, c.noeuds[0].parent_nom.clone());
+    // PID repris : grep (1111) né après pwsh (2222)
+    let t = 134_000_000_000_000_000u64;
+    let mut arbre = crate::chaines::Arbre::default();
+    arbre.fixer_pid_service(PID_SERVICE_ESSAI);
+    arbre.creation_a(100, Some(4), r"C:\O\outil.exe", None, Some(t));
+    arbre.creation_a(1111, Some(100), r"C:\G\grep.exe", None, Some(t + 50_000_000));
+    arbre.creation_a(2222, Some(1111), r"C:\P\pwsh.exe", None, Some(t + 10_000_000));
+    arbre.signaler(2222, 5, "a");
+    let c = arbre.chaines();
+    assert_eq!(tete(&c[0]), (2222, "pid-reutilise".to_string(), 1111, String::new()));
+    // Parent terminé avant la création de l'enfant ; sa propre chaîne remonte à un parent absent de la table (PID 4)
+    let mut arbre = arbre_avec_chemins(&[(100, "outil", 4), (500, "MpCmdRun", 100)], &[]);
+    arbre.maj(&liste_t20(&[(100, "outil", 4)]));
+    arbre.maj(&liste_t20(&[(100, "outil", 4), (600, "pwsh", 500)]));
+    arbre.signaler(500, 7, "a");
+    arbre.signaler(600, 5, "b");
+    let mut tetes: Vec<_> = arbre.chaines().iter().map(tete).collect();
+    tetes.sort();
+    assert_eq!(tetes, [(100, "parent-inconnu".to_string(), 4, String::new()), (600, "parent-termine".to_string(), 500, String::new())]);
+    // Parent usurpé : le service de deR4Tizer, nommé
+    let service = PID_SERVICE_ESSAI;
+    let mut arbre = arbre_avec_chemins(&[(service, "deR4TizerSvc", 50)], &[]);
+    arbre.creation(800, Some(service), r"C:\Users\Public\outil.exe", None);
+    arbre.creation(801, Some(800), r"C:\W\System32\whoami.exe", None);
+    arbre.signaler(801, 7, "reconnaissance");
+    assert_eq!(tete(&arbre.chaines()[0]), (800, "parent-service".to_string(), service, "deR4TizerSvc".to_string()));
+    // Profondeur : 40 générations aux heures exactes, signal sur la dernière ; la tête est à 32 processus d'elle
+    let mut arbre = crate::chaines::Arbre::default();
+    arbre.fixer_pid_service(PID_SERVICE_ESSAI);
+    for i in 0..40u32 {
+        arbre.creation_a(1000 + i, Some(999 + i), &format!(r"C:\X\p{i}.exe"), None, Some(t + u64::from(i)));
+    }
+    arbre.signaler(1039, 5, "a");
+    let c = arbre.chaines();
+    assert_eq!(c[0].noeuds.len(), 32);
+    assert_eq!(tete(&c[0]), (1008, "profondeur-max".to_string(), 1007, "p7".to_string()));
+}
+
+/// Signaux publiés bornés : 20 par processus puis compteur, code 100 caractères, 8 techniques de 9 caractères, raison 90.
+/// Le score et les raisons jointes (détection, vue texte) restent ceux de tous les signaux
+#[test]
+fn t20_signaux_bornes() {
+    let mut arbre = arbre_de_test();
+    let techniques: Vec<String> = (0..12).map(|i| format!("T{:04}.{:03}xyz", 1000 + i, i)).collect();
+    for i in 0..25 {
+        arbre.signaler_code(300, 1, &format!("{i} {}", "r".repeat(200)), &techniques, &format!("PRC-002#{}", "c".repeat(300)));
+    }
+    arbre.signaler(400, 1, "b");
+    let c = &arbre.chaines()[0];
+    let n = c.noeuds.iter().find(|n| n.pid == 300).expect("nœud 300");
+    assert_eq!((n.signaux.len(), n.signaux_tronques), (20, 5));
+    assert!(n.signaux.iter().all(|s| s.code.chars().count() == 100 && s.raison.chars().count() == 90 && s.techniques.len() == 8
+        && s.techniques.iter().all(|t| t.chars().count() == 9)));
+    assert_eq!(n.signaux[0].techniques[0], "T1000.000");
+    assert!(n.signaux[0].raison.starts_with("0 ") && n.signaux[19].raison.starts_with("19 "), "les 20 premiers, dans l'ordre");
+    assert_eq!(n.score, 25, "score du nœud : tous les signaux");
+    assert_eq!(n.raisons.matches(" ; ").count(), 24, "raisons jointes : toutes");
+    let s = crate::chaines::signal_publie("é".repeat(150).as_str(), 3, &"9".repeat(40), &[], &"x".repeat(91));
+    assert_eq!((s.code.chars().count(), s.heure.len(), s.raison.len(), s.score), (100, 23, 90, 3));
+}
+
+/// Copie publiée plafonnée à 300 processus, le reste compté ; un parent toujours avant ses enfants (aucun nœud publié
+/// sans son parent) ; la chaîne en mémoire (détection) garde tous ses nœuds et son score
+#[test]
+fn t20_publication_plafonnee() {
+    let mut arbre = arbre_de_test();
+    for i in 0..350u32 {
+        arbre.creation(10_000 + i, Some(300), r"C:\W\System32\rundll32.exe", None);
+        arbre.signaler_code(10_000 + i, 1, &format!("s{i}"), &[], &format!("X#{i}"));
+    }
+    let c = &arbre.chaines()[0];
+    assert_eq!(c.noeuds.len(), 352, "cmd, powershell et 350 enfants");
+    let p = crate::chaines::chaine_publiee(c, &|_| String::new());
+    assert_eq!((p.noeuds.len(), p.noeuds_tronques), (crate::chaines::NOEUDS_PUBLIES, 52));
+    assert_eq!(p.noeuds[0].pid, c.noeuds[0].pid);
+    let publies: std::collections::HashSet<u32> = p.noeuds.iter().map(|n| n.pid).collect();
+    assert!(p.noeuds.iter().skip(1).all(|n| publies.contains(&n.parent_pid)), "aucun nœud publié sans son parent");
+    assert_eq!((c.noeuds.len(), p.score), (352, c.score));
+}
+
+/// Ancien format relisible (champs absents : valeurs par défaut) ; copie publiée : exactement les champs de la liste
+/// validée, aucun autre (les heures brutes ne sont jamais écrites)
+#[test]
+fn t20_format_publie() {
+    let ancien = r#"{"Racine":"cmd","Score":12,"Resume":"cmd → pwsh","Depuis":"2026-11-28 10:00:00","Noeuds":[{"Profondeur":0,"Pid":200,
+        "Nom":"cmd","Chemin":"","LigneCommande":"","Score":5,"Raisons":"a"}]}"#;
+    let c: crate::chaines::Chaine = serde_json::from_str(ancien).expect("ancien format");
+    assert_eq!((c.identite.as_str(), c.entite.as_str(), c.noeuds_tronques), ("", "", 0));
+    let n = &c.noeuds[0];
+    assert_eq!((n.parent_pid, n.creation.as_str(), n.creation_exacte, n.vivant, n.fin.as_str(), n.lien.as_str(), n.parent_nom.as_str(),
+        n.signaux.len(), n.signaux_tronques), (0, "", false, false, "", "", "", 0, 0));
+    let mut arbre = arbre_de_test();
+    arbre.signaler_code(300, 5, "a", &["T1059.001".to_string()], "PRC-002#x");
+    let p = crate::chaines::chaine_publiee(&arbre.chaines()[0], &crate::chaines::heure_locale_ms);
+    let v = serde_json::to_value(&p).expect("JSON");
+    let cles = |o: &serde_json::Value| {
+        let mut k: Vec<String> = o.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default();
+        k.sort();
+        k
+    };
+    assert_eq!(cles(&v), ["Depuis", "Entite", "Identite", "Noeuds", "NoeudsTronques", "Racine", "Resume", "Score"]);
+    assert_eq!(cles(&v["Noeuds"][1]), ["Chemin", "Creation", "CreationExacte", "Fin", "Lien", "LigneCommande", "Nom", "ParentNom", "ParentPid",
+        "Pid", "Profondeur", "Raisons", "Score", "Signaux", "SignauxTronques", "Vivant"]);
+    assert_eq!(cles(&v["Noeuds"][1]["Signaux"][0]), ["Code", "Heure", "Raison", "Score", "Techniques"]);
+    assert_eq!(v["Noeuds"][1]["Creation"].as_str().map(str::len), Some(23), "{}", v["Noeuds"][1]["Creation"]);
+    let relu: crate::chaines::Chaine = serde_json::from_value(v).expect("relu");
+    assert_eq!(relu.noeuds[1].signaux[0].code, "PRC-002#x");
+}
+
 // ------------------------------------------------------------ RES et DNS : connexions et requêtes DNS (PR 3.8)
 // Décisions pures du cycle de surveillance (moniteur::score_flux, regle_flux, premiere_connexion_signalee,
 // alerte_adresses_publiques, alerte_dns), des ports en écoute (surveillances::ports_ouverts) et du journal du pare-feu

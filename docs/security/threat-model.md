@@ -135,8 +135,12 @@ as the service on the channel.
 - Published command lines (ATT&CK coverage, batch 1): since reading 4688 events, the process chains of
   `etat.json` can show the first 300 characters of the command line of processes of other accounts, SYSTEM
   included, to reader accounts (which the WMI trace already allowed for a process still alive). A secret passed
-  as an argument (password on the command line) can appear there; the number of nodes of a chain is not bounded
-  (audit of #244). The SIEM also keeps 400 characters of the command line of each process creation (4688),
+  as an argument (password on the command line) can appear there; the number of nodes of a chain was not bounded
+  (audit of #244): since T-20 (step 1, lab-tested), 300 processes at most per published chain, the rest counted
+  (`NoeudsTronques`). T-20 also publishes, for the same chains, the reason of each signal (same masked text as
+  `Raisons`, 90 characters), creation and end times, the parent PID and the entity of the chain (head path, which can
+  contain the account folder, as already in the CHA-001 alerts); nothing that the tree did not already hold, no new
+  collection (`docs/detection/modele-evenement.md`). The SIEM also keeps 400 characters of the command line of each process creation (4688),
   all accounts, 30 days, readable by reader accounts, and the syslog export or the API transmits them. Since the audit
   of 2026-11-23 (A-6-1, fixed in the lab), recognized secrets are masked (`***`) before any storage or publication:
   SIEM, alerts (alertes.json, exports, notifications), chains and connections of `etat.json`; detection analyzes the

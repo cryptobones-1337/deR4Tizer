@@ -139,6 +139,7 @@ Paths: service under `service-rs/src/`, interface under `src/`.
 | `EtatReseau.ResultatLeurre` | `ndr.rs` | `Fluent.cs`: `VueReseauLocalFluent.Resume`; `Reseau.cs` | raw; the interface looks for "RÉPONSE" in it |
 | `FluxInfo.Raisons`, `Origine` ("téléchargé depuis Internet…") | `moniteur.rs`, `reponse.rs` | `Fluent.cs`: `VueConnexionsFluent.Detail`; `Gui.cs`: `RemplirFlux` | raw; the interface looks for "MENACE", "BLOQUÉ" in it |
 | `NoeudChaine.Raisons` | `chaines.rs` | `Fluent.cs`: `VueChainesFluent.Detail`; `Gui.cs` | raw |
+| `NoeudChaine.Signaux[].Raison` (T-20, same text as `Raisons`); `Lien` and `Signaux[].Code` are ASCII codes for the interface to translate | `chaines.rs` | not displayed yet (T-20, interface step) | raw |
 | Baseline: `Categorie`, `Titre`, `Pourquoi`, `Compat`, `Actuel`, `Attendu`, `Message`, state ("conforme", "non conforme") | `baseline.rs` | `Fluent.cs`: `PageBaselineFluent`, `VueBaselineFluent`; `Gui.cs` | raw |
 | Automatic start: `Remarque` ("NON SIGNÉ", "lancé via …"), `Categorie` | `persistance.rs`: `evaluer` | `Fluent.cs`: `VueDemarrageFluent`; `Gui.cs` | raw |
 | Threat lists: `Statut` ("pas encore téléchargée", "rejetée : …"), `Confiance`, `Licence` | `menaces.rs` | `Fluent.cs`: `VueMenacesFluent.Detail`, `PageMenacesFluent`; `Gui.cs` | raw (short label translated); the interface tests `StartsWith("désactivée")` |

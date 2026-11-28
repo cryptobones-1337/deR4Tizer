@@ -7279,6 +7279,24 @@ fn chaines_publiees_secrets_masques() {
     assert!(c.noeuds[0].ligne_commande.contains("MotSecretChaine"), "l'original n'est pas touché");
 }
 
+/// T-20 : la copie publiée (etat.json) masque aussi la raison de chaque signal, comme `Raisons`, la garde à 90 caractères,
+/// plafonne une chaîne à 300 processus (le reste compté) et met les heures en forme ; l'original n'est pas touché
+#[test]
+fn chaines_publiees_signaux_masques_et_plafond() {
+    let noeud = crate::chaines::NoeudChaine {
+        signaux: vec![crate::chaines::SignalChaine { raison: "motif : schtasks /rp SecretSignal".into(), ..Default::default() }],
+        naissance_ft: 134_000_000_001_234_567, ..Default::default()
+    };
+    let c = crate::chaines::Chaine { noeuds: vec![noeud; 320], ..Default::default() };
+    let publiees = crate::moniteur::chaines_publiees(std::slice::from_ref(&c));
+    let p = &publiees[0];
+    assert_eq!((p.noeuds.len(), p.noeuds_tronques), (300, 20));
+    assert!(!p.noeuds[0].signaux[0].raison.contains("SecretSignal") && p.noeuds[0].signaux[0].raison.starts_with("motif"), "{}", p.noeuds[0].signaux[0].raison);
+    assert!(p.noeuds[0].signaux[0].raison.chars().count() <= 90);
+    assert!(p.noeuds[0].creation.ends_with(".123") && p.noeuds[0].fin.is_empty(), "{}", p.noeuds[0].creation);
+    assert!(c.noeuds[0].signaux[0].raison.contains("SecretSignal") && c.noeuds.len() == 320, "l'original n'est pas touché");
+}
+
 /// A-6-1, contrôle du source : la ligne d'un 4688 passe par `masquer_secrets` avant d'être bornée et mise dans le message ;
 /// tout événement enregistré aussi (point d'entrée unique du SIEM) ; les règles PRC analysent la ligne non masquée
 /// (processus.rs ne masque rien, le masquage vient après la décision, dans borner_alerte)
